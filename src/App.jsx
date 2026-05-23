@@ -1,5 +1,5 @@
-import { useState, useEffect, useRef, useCallback } from 'react';
-import { LENORMAND_CARDS } from './constants';
+import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import { LENORMAND_CARDS, getLenormandCombo } from './constants';
 import CardSlot from './components/CardSlot';
 import CardSelectModal from './components/CardSelectModal';
 import { 
@@ -26,7 +26,8 @@ import {
   Cloud,
   FileDown,
   FileUp,
-  X
+  X,
+  Search
 } from 'lucide-react';
 
 export default function App() {
@@ -46,6 +47,8 @@ export default function App() {
   const [dailyMemos, setDailyMemos] = useState({});
   const [dailyMorningNote, setDailyMorningNote] = useState('');
   const [dailyEveningNote, setDailyEveningNote] = useState('');
+  const [dailyMood, setDailyMood] = useState('');
+  const [dailySatisfaction, setDailySatisfaction] = useState('');
 
   // Free Reading State
   const [freeQuestion, setFreeQuestion] = useState('');
@@ -85,6 +88,12 @@ export default function App() {
   });
 
   const googleBtnContainerRef = useRef(null);
+
+  // Convenience features states
+  const [isShufflingDaily, setIsShufflingDaily] = useState(false);
+  const [isShufflingFree, setIsShufflingFree] = useState(false);
+  const [historySearch, setHistorySearch] = useState('');
+  const [historyTypeFilter, setHistoryTypeFilter] = useState('all');
 
   // ==========================================
   // Core Functions & Handlers (Fully Defined)
@@ -167,6 +176,8 @@ export default function App() {
       setDailyMemos({});
       setDailyMorningNote('');
       setDailyEveningNote('');
+      setDailyMood('');
+      setDailySatisfaction('');
     } else {
       setFreeQuestion('');
       setFreeCards(Array(freeCardCount).fill(null));
@@ -336,7 +347,9 @@ export default function App() {
         cards: dailyCards.map(c => c ? c.id : null),
         memos: { ...dailyMemos },
         morningNote: dailyMorningNote,
-        eveningNote: dailyEveningNote
+        eveningNote: dailyEveningNote,
+        mood: dailyMood,
+        satisfaction: dailySatisfaction
       };
     } else {
       const hasCards = freeCards.some(c => c !== null);
@@ -373,6 +386,8 @@ export default function App() {
       setDailyMemos(entry.memos || {});
       setDailyMorningNote(entry.morningNote || '');
       setDailyEveningNote(entry.eveningNote || '');
+      setDailyMood(entry.mood || '');
+      setDailySatisfaction(entry.satisfaction || '');
     } else {
       setFreeQuestion(entry.question || '');
       setFreeCardCount(entry.cardCount);
@@ -454,6 +469,39 @@ export default function App() {
     }
   }, [isAuthModalOpen, googleClientId]);
 
+  // Shuffle and Random Draw visual handler
+  const triggerShuffleDaily = () => {
+    if (isShufflingDaily) return;
+    setIsShufflingDaily(true);
+    let count = 0;
+    const interval = setInterval(() => {
+      setDailyCards(Array(dailyCardCount).fill(null).map(() => LENORMAND_CARDS[Math.floor(Math.random() * 36)]));
+      count++;
+      if (count > 8) {
+        clearInterval(interval);
+        const shuffled = [...LENORMAND_CARDS].sort(() => 0.5 - Math.random());
+        setDailyCards(shuffled.slice(0, dailyCardCount));
+        setIsShufflingDaily(false);
+      }
+    }, 80);
+  };
+
+  const triggerShuffleFree = () => {
+    if (isShufflingFree) return;
+    setIsShufflingFree(true);
+    let count = 0;
+    const interval = setInterval(() => {
+      setFreeCards(Array(freeCardCount).fill(null).map(() => LENORMAND_CARDS[Math.floor(Math.random() * 36)]));
+      count++;
+      if (count > 8) {
+        clearInterval(interval);
+        const shuffled = [...LENORMAND_CARDS].sort(() => 0.5 - Math.random());
+        setFreeCards(shuffled.slice(0, freeCardCount));
+        setIsShufflingFree(false);
+      }
+    }, 80);
+  };
+
   // Adjust daily card count
   const handleDailyCardCountChange = (count) => {
     setDailyCardCount(count);
@@ -494,9 +542,90 @@ export default function App() {
     });
   };
 
+  // Filtered Journals for sidebar history
+  const filteredJournals = useMemo(() => {
+    return journals.filter(entry => {
+      if (historyTypeFilter !== 'all' && entry.type !== historyTypeFilter) {
+        return false;
+      }
+
+      const term = historySearch.trim().toLowerCase();
+      if (!term) return true;
+
+      if (entry.date && entry.date.toLowerCase().includes(term)) return true;
+      if (entry.question && entry.question.toLowerCase().includes(term)) return true;
+      if (entry.morningNote && entry.morningNote.toLowerCase().includes(term)) return true;
+      if (entry.eveningNote && entry.eveningNote.toLowerCase().includes(term)) return true;
+      if (entry.prediction && entry.prediction.toLowerCase().includes(term)) return true;
+      if (entry.feedback && entry.feedback.toLowerCase().includes(term)) return true;
+
+      const cardList = entry.cards.map(id => id ? LENORMAND_CARDS.find(c => c.id === id) : null);
+      for (const card of cardList) {
+        if (!card) continue;
+        if (card.nameKo.toLowerCase().includes(term)) return true;
+        if (card.nameEn.toLowerCase().includes(term)) return true;
+        if (card.keywords.toLowerCase().includes(term)) return true;
+      }
+
+      return false;
+    });
+  }, [journals, historySearch, historyTypeFilter]);
+
   // Chunked Daily and Free cards
   const dailyRows = chunkCards(dailyCards, dailyCols);
   const freeRows = chunkCards(freeCards, freeCols);
+
+  // Adjacent Card Pairing Interpreter UI
+  const renderPairingInterpreter = (cards) => {
+    const filledCards = cards.filter(c => c !== null);
+    if (filledCards.length < 2) return null;
+
+    const pairs = [];
+    for (let i = 0; i < filledCards.length - 1; i++) {
+      const c1 = filledCards[i];
+      const c2 = filledCards[i + 1];
+      const explanation = getLenormandCombo(c1, c2);
+      pairs.push({ c1, c2, explanation });
+    }
+
+    return (
+      <div 
+        className="vintage-panel" 
+        style={{ 
+          marginTop: '24px', 
+          backgroundColor: 'var(--panel-bg-alt)', 
+          border: '1px solid var(--border-color)',
+          padding: '20px 24px',
+          width: '100%'
+        }}
+      >
+        <h4 className="serif-font" style={{ fontSize: '16px', color: 'var(--text-gold)', marginBottom: '16px', display: 'flex', alignItems: 'center', gap: '8px', borderBottom: '1px solid rgba(223,183,108,0.2)', paddingBottom: '8px', letterSpacing: '-0.01em' }}>
+          <Sparkles size={16} />
+          💡 레노먼드 조합 해석 어시스턴트 (Adjacent Card Pairings)
+        </h4>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+          {pairs.map((p, idx) => (
+            <div key={idx} style={{ display: 'flex', flexDirection: 'column', gap: '6px', borderBottom: idx < pairs.length - 1 ? '1px dashed rgba(223,183,108,0.1)' : 'none', paddingBottom: idx < pairs.length - 1 ? '14px' : 0 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '14px', fontWeight: 'bold', color: 'var(--text-primary)' }}>
+                <span style={{ color: 'var(--text-gold)' }}>[슬롯 {cards.indexOf(p.c1) + 1} + 슬롯 {cards.indexOf(p.c2) + 1}]</span>
+                <span>{p.c1.nameKo} ({p.c1.nameEn}) × {p.c2.nameKo} ({p.c2.nameEn})</span>
+              </div>
+              <p style={{ 
+                fontSize: '14px', 
+                color: 'var(--text-secondary)', 
+                lineHeight: '1.6', 
+                margin: 0,
+                whiteSpace: 'pre-wrap',
+                wordBreak: 'keep-all'
+              }}>
+                {p.explanation}
+              </p>
+            </div>
+          ))}
+        </div>
+      </div>
+    );
+  };
 
   const currentCard = activeSlotIndex !== null
     ? (activeTab === 'daily' ? dailyCards[activeSlotIndex] : freeCards[activeSlotIndex])
@@ -570,13 +699,13 @@ export default function App() {
             <button
               onClick={() => setTheme('blue-owl')}
               style={{
-                background: theme === 'blue-owl' ? 'var(--gold-metallic)' : 'none',
-                color: theme === 'blue-owl' ? '#000' : 'var(--text-secondary)',
+                background: theme === 'blue-owl' ? 'var(--btn-bg)' : 'none',
+                color: theme === 'blue-owl' ? 'var(--btn-text)' : 'var(--text-secondary)',
                 border: 'none',
                 padding: '6px 12px',
                 borderRadius: '6px',
                 cursor: 'pointer',
-                fontSize: '12px',
+                fontSize: '13px',
                 fontWeight: 'bold',
                 display: 'flex',
                 alignItems: 'center',
@@ -585,18 +714,18 @@ export default function App() {
               }}
             >
               <Moon size={13} />
-              Blue
+              Midnight
             </button>
             <button
               onClick={() => setTheme('red-owl')}
               style={{
-                background: theme === 'red-owl' ? 'var(--gold-metallic)' : 'none',
-                color: theme === 'red-owl' ? '#000' : 'var(--text-secondary)',
+                background: theme === 'red-owl' ? 'var(--btn-bg)' : 'none',
+                color: theme === 'red-owl' ? 'var(--btn-text)' : 'var(--text-secondary)',
                 border: 'none',
                 padding: '6px 12px',
                 borderRadius: '6px',
                 cursor: 'pointer',
-                fontSize: '12px',
+                fontSize: '13px',
                 fontWeight: 'bold',
                 display: 'flex',
                 alignItems: 'center',
@@ -605,18 +734,18 @@ export default function App() {
               }}
             >
               <Sparkles size={13} />
-              Red
+              Minimal Zinc
             </button>
             <button
               onClick={() => setTheme('classic-cream')}
               style={{
-                background: theme === 'classic-cream' ? 'var(--accent-color)' : 'none',
-                color: theme === 'classic-cream' ? '#fff' : 'var(--text-secondary)',
+                background: theme === 'classic-cream' ? 'var(--btn-bg)' : 'none',
+                color: theme === 'classic-cream' ? 'var(--btn-text)' : 'var(--text-secondary)',
                 border: 'none',
                 padding: '6px 12px',
                 borderRadius: '6px',
                 cursor: 'pointer',
-                fontSize: '12px',
+                fontSize: '13px',
                 fontWeight: 'bold',
                 display: 'flex',
                 alignItems: 'center',
@@ -625,7 +754,7 @@ export default function App() {
               }}
             >
               <Sun size={13} />
-              Cream
+              White Gold
             </button>
           </div>
 
@@ -866,6 +995,17 @@ export default function App() {
                       </div>
                     </div>
 
+                    {/* Shuffle & Random Draw Button */}
+                    <button
+                      className="gold-button"
+                      onClick={triggerShuffleDaily}
+                      disabled={isShufflingDaily}
+                      style={{ height: '36px', padding: '0 16px', fontSize: '13px' }}
+                    >
+                      <Sparkles size={14} className={isShufflingDaily ? "animate-spin" : ""} />
+                      {isShufflingDaily ? "셔플 중..." : "🃏 셔플 & 무작위 뽑기"}
+                    </button>
+
                   </div>
                 </div>
 
@@ -934,6 +1074,9 @@ export default function App() {
                   </div>
                 </div>
 
+                {/* Card pairings assistant */}
+                {renderPairingInterpreter(dailyCards)}
+
               </div>
             </div>
 
@@ -952,7 +1095,7 @@ export default function App() {
                   value={dailyDate}
                   onChange={(e) => setDailyDate(e.target.value)}
                 />
-                <button className="gold-button" style={{ height: '36px', padding: '0 16px' }} onClick={punchTime}>
+                <button className="gold-button" style={{ height: '36px', padding: '0 20px', whiteSpace: 'nowrap' }} onClick={punchTime}>
                   <Clock size={15} />
                   스탬프 찍기
                 </button>
@@ -1074,12 +1217,103 @@ export default function App() {
                   <p style={{ fontSize: '12px', color: 'var(--text-secondary)', marginBottom: '10px' }}>
                     하루를 마무리하며 내 예측이 얼마나 일치했는지, 혹은 카드가 사실 어떠한 현실적 뜻으로 펼쳐졌는지 복기해 보세요.
                   </p>
+                  
+                  {/* Daily Mood Emoji Selector */}
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '14px', flexWrap: 'wrap' }}>
+                    <span style={{ fontSize: '13px', color: 'var(--text-secondary)', fontWeight: 'bold' }}>하루 기분:</span>
+                    <div style={{ display: 'flex', gap: '8px' }}>
+                      {[
+                        { emoji: '😊', label: '좋음', val: 'good' },
+                        { emoji: '😐', label: '무난', val: 'normal' },
+                        { emoji: '😢', label: '나쁨', val: 'bad' }
+                      ].map(m => {
+                        const isSelected = dailyMood === m.val;
+                        return (
+                          <button
+                            key={m.val}
+                            onClick={() => setDailyMood(dailyMood === m.val ? '' : m.val)}
+                            style={{
+                              background: isSelected ? 'var(--btn-bg)' : 'var(--panel-bg-alt)',
+                              color: isSelected ? 'var(--btn-text)' : 'var(--text-primary)',
+                              border: '1px solid var(--border-color)',
+                              opacity: isSelected ? 1 : 0.6,
+                              borderRadius: '20px',
+                              padding: '4px 12px',
+                              fontSize: '13px',
+                              cursor: 'pointer',
+                              display: 'inline-flex',
+                              alignItems: 'center',
+                              gap: '6px',
+                              fontWeight: isSelected ? 'bold' : 'normal',
+                              transition: 'all 0.2s',
+                              transform: isSelected ? 'scale(1.05)' : 'scale(1)'
+                            }}
+                            onMouseEnter={(e) => {
+                              if (!isSelected) e.currentTarget.style.opacity = '1';
+                            }}
+                            onMouseLeave={(e) => {
+                              if (!isSelected) e.currentTarget.style.opacity = '0.6';
+                            }}
+                          >
+                            <span style={{ fontSize: '15px' }}>{m.emoji}</span>
+                            <span>{m.label}</span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+
                   <textarea
                     className="parchment-input"
                     placeholder="하루를 되돌아보고 깨달은 진짜 해석과 반성을 기록해 보세요..."
                     value={dailyEveningNote}
                     onChange={(e) => setDailyEveningNote(e.target.value)}
                   />
+
+                  {/* Reading Satisfaction Selector */}
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginTop: '14px', flexWrap: 'wrap' }}>
+                    <span style={{ fontSize: '13px', color: 'var(--text-secondary)', fontWeight: 'bold' }}>리딩 만족도:</span>
+                    <div style={{ display: 'flex', gap: '8px' }}>
+                      {[
+                        { emoji: '⭕', label: '만족/일치', val: 'good' },
+                        { emoji: '🔺', label: '보통', val: 'normal' },
+                        { emoji: '❌', label: '미흡/불일치', val: 'bad' }
+                      ].map(s => {
+                        const isSelected = dailySatisfaction === s.val;
+                        return (
+                          <button
+                            key={s.val}
+                            onClick={() => setDailySatisfaction(dailySatisfaction === s.val ? '' : s.val)}
+                            style={{
+                              background: isSelected ? 'var(--btn-bg)' : 'var(--panel-bg-alt)',
+                              color: isSelected ? 'var(--btn-text)' : 'var(--text-primary)',
+                              border: '1px solid var(--border-color)',
+                              opacity: isSelected ? 1 : 0.6,
+                              borderRadius: '20px',
+                              padding: '4px 12px',
+                              fontSize: '13px',
+                              cursor: 'pointer',
+                              display: 'inline-flex',
+                              alignItems: 'center',
+                              gap: '6px',
+                              fontWeight: isSelected ? 'bold' : 'normal',
+                              transition: 'all 0.2s',
+                              transform: isSelected ? 'scale(1.05)' : 'scale(1)'
+                            }}
+                            onMouseEnter={(e) => {
+                              if (!isSelected) e.currentTarget.style.opacity = '1';
+                            }}
+                            onMouseLeave={(e) => {
+                              if (!isSelected) e.currentTarget.style.opacity = '0.6';
+                            }}
+                          >
+                            <span style={{ fontSize: '14px' }}>{s.emoji}</span>
+                            <span>{s.label}</span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
                 </div>
               </div>
 
@@ -1189,6 +1423,17 @@ export default function App() {
                       </div>
                     </div>
 
+                    {/* Shuffle & Random Draw Button */}
+                    <button
+                      className="gold-button"
+                      onClick={triggerShuffleFree}
+                      disabled={isShufflingFree}
+                      style={{ height: '36px', padding: '0 16px', fontSize: '13px' }}
+                    >
+                      <Sparkles size={14} className={isShufflingFree ? "animate-spin" : ""} />
+                      {isShufflingFree ? "셔플 중..." : "🃏 셔플 & 무작위 뽑기"}
+                    </button>
+
                   </div>
                 </div>
 
@@ -1251,6 +1496,9 @@ export default function App() {
                     ))}
                   </div>
                 </div>
+
+                {/* Card pairings assistant */}
+                {renderPairingInterpreter(freeCards)}
 
               </div>
             </div>
@@ -1377,13 +1625,63 @@ export default function App() {
               </button>
             </div>
 
+            {/* Real-time search and filter row */}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', marginBottom: '16px' }}>
+              <div style={{ position: 'relative', width: '100%' }}>
+                <Search size={16} style={{ position: 'absolute', left: '10px', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-secondary)' }} />
+                <input
+                  type="text"
+                  className="parchment-input"
+                  style={{ paddingLeft: '34px', height: '34px', fontSize: '13px' }}
+                  placeholder="기록 날짜, 질문, 키워드, 카드명 검색..."
+                  value={historySearch}
+                  onChange={(e) => setHistorySearch(e.target.value)}
+                />
+                {historySearch && (
+                  <button
+                    onClick={() => setHistorySearch('')}
+                    style={{ position: 'absolute', right: '10px', top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', color: 'var(--text-secondary)', cursor: 'pointer' }}
+                  >
+                    <X size={14} />
+                  </button>
+                )}
+              </div>
+              
+              <div style={{ display: 'flex', gap: '6px' }}>
+                {[
+                  { label: '전체', val: 'all' },
+                  { label: '데일리', val: 'daily' },
+                  { label: '프리 리딩', val: 'free' }
+                ].map(tab => (
+                  <button
+                    key={tab.val}
+                    onClick={() => setHistoryTypeFilter(tab.val)}
+                    style={{
+                      flex: 1,
+                      padding: '4px 0',
+                      fontSize: '12px',
+                      borderRadius: '4px',
+                      border: '1px solid var(--border-color)',
+                      background: historyTypeFilter === tab.val ? 'var(--btn-bg)' : 'transparent',
+                      color: historyTypeFilter === tab.val ? 'var(--btn-text)' : 'var(--text-secondary)',
+                      cursor: 'pointer',
+                      fontWeight: historyTypeFilter === tab.val ? 'bold' : 'normal',
+                      transition: 'all 0.2s'
+                    }}
+                  >
+                    {tab.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+
             <div style={{ flex: 1, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '14px' }}>
-              {journals.length === 0 ? (
+              {filteredJournals.length === 0 ? (
                 <div style={{ textAlign: 'center', padding: '40px 0', color: 'var(--text-secondary)', fontSize: '14px' }}>
-                  아직 저장된 저널 기록이 없습니다.
+                  검색 조건에 맞는 저널 기록이 없습니다.
                 </div>
               ) : (
-                journals.map((entry) => {
+                filteredJournals.map((entry) => {
                   const cardList = entry.cards.map(id => id ? LENORMAND_CARDS.find(c => c.id === id) : null);
                   return (
                     <div
@@ -1406,10 +1704,46 @@ export default function App() {
                         e.currentTarget.style.boxShadow = 'none';
                       }}
                     >
-                      <div style={{ display: 'flex', justifycontent: 'space-between', alignItems: 'flex-start', marginBottom: '8px' }}>
-                        <span className="symbol-badge" style={{ fontSize: '10px', padding: '2px 6px' }}>
-                          {entry.type === 'daily' ? '데일리' : '프리 리딩'}
-                        </span>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '8px' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                          <span className="symbol-badge" style={{ fontSize: '10px', padding: '2px 6px' }}>
+                            {entry.type === 'daily' ? '데일리' : '프리 리딩'}
+                          </span>
+                          {entry.type === 'daily' && entry.mood && (
+                            <span style={{ 
+                              fontSize: '11px', 
+                              backgroundColor: 'var(--panel-bg)', 
+                              padding: '2px 8px', 
+                              borderRadius: '12px',
+                              border: '1px solid var(--border-color)',
+                              display: 'inline-flex',
+                              alignItems: 'center',
+                              gap: '4px',
+                              color: 'var(--text-gold)'
+                            }}>
+                              {entry.mood === 'good' && '😊 좋음'}
+                              {entry.mood === 'normal' && '😐 무난'}
+                              {entry.mood === 'bad' && '😢 나쁨'}
+                            </span>
+                          )}
+                          {entry.type === 'daily' && entry.satisfaction && (
+                            <span style={{ 
+                              fontSize: '11px', 
+                              backgroundColor: 'var(--panel-bg)', 
+                              padding: '2px 8px', 
+                              borderRadius: '12px',
+                              border: '1px solid var(--border-color)',
+                              display: 'inline-flex',
+                              alignItems: 'center',
+                              gap: '4px',
+                              color: 'var(--text-gold)'
+                            }}>
+                              {entry.satisfaction === 'good' && '⭕ 만족'}
+                              {entry.satisfaction === 'normal' && '🔺 보통'}
+                              {entry.satisfaction === 'bad' && '❌ 미흡'}
+                            </span>
+                          )}
+                        </div>
                         <button
                           onClick={(e) => deleteJournal(entry.id, e)}
                           style={{
@@ -1420,7 +1754,8 @@ export default function App() {
                             padding: '2px',
                             display: 'flex',
                             alignItems: 'center',
-                            marginLeft: 'auto'
+                            marginLeft: '8px',
+                            flexShrink: 0
                           }}
                         >
                           <Trash2 size={14} />
@@ -1470,11 +1805,11 @@ export default function App() {
       {/* GOOGLE SIGN IN AUTH MODAL */}
       {isAuthModalOpen && (
         <div className="modal-overlay" onClick={() => setIsAuthModalOpen(false)}>
-          <div className="modal-content" style={{ maxWidth: '480px' }} onClick={(e) => e.stopPropagation()}>
+          <div className="modal-content" style={{ maxWidth: '400px' }} onClick={(e) => e.stopPropagation()}>
             <div className="modal-header">
               <h2 style={{ fontSize: '18px', color: 'var(--text-gold)', margin: 0, display: 'flex', alignItems: 'center', gap: '8px' }}>
                 <LogIn size={20} />
-                구글 로그인 설정
+                구글 로그인
               </h2>
               <button className="modal-close" onClick={() => setIsAuthModalOpen(false)}>
                 <X size={20} />
@@ -1482,14 +1817,9 @@ export default function App() {
             </div>
             
             <div style={{ padding: '24px', display: 'flex', flexDirection: 'column', gap: '20px' }}>
-              <p style={{ fontSize: '13px', color: 'var(--text-secondary)', margin: 0 }}>
-                구글 로그인을 완료하면 개인 저널 기록이 보안 백업 채널을 통해 동기화됩니다. 다른 브라우저나 모바일에서도 동일하게 저널 내역을 관리해 보세요!
-              </p>
-
-              {/* Client ID Setting input */}
               <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                <label style={{ fontSize: '12px', fontWeight: 'bold', color: 'var(--text-gold)' }}>
-                  구글 OAuth Client ID 입력:
+                <label style={{ fontSize: '13px', fontWeight: 'bold', color: 'var(--text-gold)' }}>
+                  구글 OAuth Client ID:
                 </label>
                 <input 
                   type="text" 
@@ -1512,29 +1842,26 @@ export default function App() {
               ) : (
                 <div style={{ 
                   backgroundColor: 'var(--panel-bg-alt)', 
-                  border: '1px dashed var(--border-color)', 
-                  padding: '12px', 
+                  border: '1px solid var(--border-color)', 
+                  padding: '16px', 
                   borderRadius: '6px',
-                  fontSize: '12px',
+                  fontSize: '13px',
                   color: 'var(--text-secondary)',
-                  textAlign: 'center'
+                  textAlign: 'center',
+                  lineHeight: '1.6'
                 }}>
-                  구글 Client ID가 아직 없으신가요? <br />
-                  설정에서 발급 가이드를 보시거나, 아래 테스트 데모 버튼으로 기능 시뮬레이션을 먼저 진행해보실 수 있습니다!
+                  구글 OAuth Client ID를 입력창에 설정하시면 실시간 클라우드 동기화 채널이 활성화됩니다.
                 </div>
               )}
 
               {/* Demo Mode Button */}
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', borderTop: '1px solid var(--border-color)', paddingTop: '16px' }}>
-                <span style={{ fontSize: '11px', color: 'var(--text-secondary)', textAlign: 'center' }}>
-                  Client ID 발급 없이 클라우드 기능 확인하기:
-                </span>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', borderTop: '1px solid var(--border-color)', paddingTop: '16px' }}>
                 <button 
-                  className="gold-button" 
+                  className="gold-button-outline" 
                   onClick={startDemoSession}
-                  style={{ width: '100%', height: '40px' }}
+                  style={{ width: '100%', height: '38px', fontSize: '13px' }}
                 >
-                  <Sparkles size={16} />
+                  <Sparkles size={14} />
                   데모 계정으로 간편 로그인 테스트
                 </button>
               </div>
@@ -1563,43 +1890,18 @@ export default function App() {
               {/* Google Client ID config */}
               <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
                 <h3 style={{ fontSize: '15px', color: 'var(--text-gold)', margin: 0, borderBottom: '1px solid var(--border-color)', paddingBottom: '6px' }}>
-                  1. 구글 OAuth Login 설정
+                  1. 구글 로그인 설정
                 </h3>
-                <p style={{ fontSize: '12px', color: 'var(--text-secondary)', margin: 0 }}>
-                  웹앱이 구글 계정을 안전하게 인증할 수 있도록 클라이언트 ID를 등록합니다.
-                </p>
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
                   <input 
                     type="text" 
                     className="parchment-input" 
-                    style={{ fontSize: '13px', height: '36px' }}
-                    placeholder="구글 클라이언트 ID 입력..."
+                    style={{ fontSize: '14px', height: '38px' }}
+                    placeholder="구글 클라이언트 ID를 입력하세요"
                     value={googleClientId}
                     onChange={(e) => setGoogleClientId(e.target.value)}
                   />
                 </div>
-
-                {/* Collapsible Setup Tutorial */}
-                <details style={{ 
-                  backgroundColor: 'var(--panel-bg-alt)', 
-                  border: '1px solid rgba(223,183,108,0.2)', 
-                  borderRadius: '4px',
-                  padding: '10px',
-                  fontSize: '12px',
-                  cursor: 'pointer'
-                }}>
-                  <summary style={{ fontWeight: 'bold', color: 'var(--text-gold)', outline: 'none' }}>
-                    💡 구글 OAuth Client ID 무료로 발급받는 초간단 가이드
-                  </summary>
-                  <div style={{ marginTop: '10px', color: 'var(--text-secondary)', lineHeight: 1.5, display: 'flex', flexDirection: 'column', gap: '8px', cursor: 'default' }} onClick={e => e.stopPropagation()}>
-                    <div>1. <a href="https://console.cloud.google.com/" target="_blank" rel="noreferrer" style={{ color: 'var(--text-gold)', textDecoration: 'underline' }}>Google Cloud Console</a>에 접속해 프로젝트를 생성합니다.</div>
-                    <div>2. <b>[API 및 서비스] &gt; [OAuth 동의 화면]</b>으로 가서 앱 정보를 입력하고 외부(External)로 완성합니다. (범위 설정은 프로필/이메일 체크)</div>
-                    <div>3. <b>[사용자 인증 정보] &gt; [사용자 인증 정보 만들기] &gt; [OAuth 클라이언트 ID]</b>를 누릅니다.</div>
-                    <div>4. 애플리케이션 유형을 <b>웹 애플리케이션</b>으로 설정합니다.</div>
-                    <div>5. <b>[승인된 JavaScript 원본]</b>에 <code>http://localhost:5173</code>를 추가합니다.</div>
-                    <div>6. 발급된 <b>클라이언트 ID</b>를 복사하여 위 칸에 붙여넣고 로그인창을 열면 실제 내 구글 계정으로 연동이 개시됩니다!</div>
-                  </div>
-                </details>
               </div>
 
               {/* Data Import/Export */}
