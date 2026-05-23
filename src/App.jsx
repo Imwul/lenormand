@@ -7,7 +7,6 @@ import {
   Calendar, 
   Clock, 
   Moon, 
-  Sun, 
   Sparkles, 
   History, 
   Trash2, 
@@ -27,7 +26,8 @@ import {
   FileDown,
   FileUp,
   X,
-  Search
+  Search,
+  Compass
 } from 'lucide-react';
 
 export default function App() {
@@ -71,7 +71,6 @@ export default function App() {
 
   // Settings & Cloud Sync State
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
-  const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
   const [googleClientId, setGoogleClientId] = useState(() => {
     return localStorage.getItem('google_client_id') || '';
   });
@@ -87,7 +86,7 @@ export default function App() {
     return localStorage.getItem('is_auto_sync') === 'true';
   });
 
-  const googleBtnContainerRef = useRef(null);
+  const googleBtnHeaderRef = useRef(null);
 
   // Convenience features states
   const [isShufflingDaily, setIsShufflingDaily] = useState(false);
@@ -206,7 +205,6 @@ export default function App() {
       };
       
       setGoogleUser(loggedUser);
-      setIsAuthModalOpen(false);
       alert(`${loggedUser.name}님, 구글 로그인이 완료되었습니다!`);
     } catch (error) {
       console.error("JWT Decode error:", error);
@@ -224,7 +222,6 @@ export default function App() {
       isDemo: true
     };
     setGoogleUser(demoUser);
-    setIsAuthModalOpen(false);
     alert("데모 모드로 로그인되었습니다! 클라우드 동기화 시뮬레이션을 진행할 수 있습니다.");
   };
 
@@ -448,26 +445,48 @@ export default function App() {
 
   // Initialize Google Identity Services (GIS)
   useEffect(() => {
-    if (isAuthModalOpen && window.google && googleClientId) {
-      try {
-        window.google.accounts.id.initialize({
-          client_id: googleClientId,
-          callback: handleGoogleCredentialResponse
-        });
-        
-        setTimeout(() => {
-          if (googleBtnContainerRef.current) {
-            window.google.accounts.id.renderButton(
-              googleBtnContainerRef.current,
-              { theme: "filled_blue", size: "large", width: "300" }
-            );
-          }
-        }, 100);
-      } catch (err) {
-        console.error("Google Auth Init error: ", err);
+    let intervalId;
+    
+    const initGis = () => {
+      if (window.google && googleClientId && !googleUser) {
+        try {
+          window.google.accounts.id.initialize({
+            client_id: googleClientId,
+            callback: handleGoogleCredentialResponse
+          });
+          
+          setTimeout(() => {
+            if (googleBtnHeaderRef.current) {
+              window.google.accounts.id.renderButton(
+                googleBtnHeaderRef.current,
+                { 
+                  theme: "filled_blue", 
+                  size: "medium", 
+                  shape: "pill",
+                  text: "signin",
+                  logo_alignment: "left"
+                }
+              );
+            }
+          }, 100);
+          
+          if (intervalId) clearInterval(intervalId);
+        } catch (err) {
+          console.error("Google Auth Init error: ", err);
+        }
       }
+    };
+
+    initGis();
+
+    if (!window.google && googleClientId && !googleUser) {
+      intervalId = setInterval(initGis, 500);
     }
-  }, [isAuthModalOpen, googleClientId]);
+
+    return () => {
+      if (intervalId) clearInterval(intervalId);
+    };
+  }, [googleClientId, googleUser]);
 
   // Shuffle and Random Draw visual handler
   const triggerShuffleDaily = () => {
@@ -753,8 +772,8 @@ export default function App() {
                 transition: 'all 0.2s'
               }}
             >
-              <Sun size={13} />
-              White Gold
+              <Compass size={13} />
+              Mystic Forest
             </button>
           </div>
 
@@ -778,11 +797,20 @@ export default function App() {
                 <LogOut size={13} />
               </button>
             </div>
+          ) : googleClientId ? (
+            <div 
+              ref={googleBtnHeaderRef} 
+              id="google-signin-btn-header" 
+              style={{ height: '36px', display: 'flex', alignItems: 'center' }}
+            />
           ) : (
             <button 
               className="gold-button"
               style={{ height: '36px', padding: '0 14px', fontSize: '12px' }}
-              onClick={() => setIsAuthModalOpen(true)}
+              onClick={() => {
+                setIsSettingsOpen(true);
+                alert("구글 로그인 설정을 위해 '구글 클라이언트 ID'를 먼저 설정창에서 입력해 주세요.");
+              }}
             >
               <LogIn size={14} />
               구글 로그인 & 동기화
@@ -1029,7 +1057,7 @@ export default function App() {
                 </div>
 
                 {/* Grid of Card Slots */}
-                <div className="cards-row-container" style={{ padding: '30px 10px' }}>
+                <div className={`cards-row-container ${dailyCardCount === 36 ? 'grand-tableau-grid' : ''}`} style={{ padding: '30px 10px' }}>
                   <div style={{ display: 'flex', flexDirection: 'column', gap: '20px', alignItems: 'center', width: '100%' }}>
                     {dailyRows.map((rowCards, rowIndex) => (
                       <div 
@@ -1457,7 +1485,7 @@ export default function App() {
                 </div>
 
                 {/* Grid of Card Slots */}
-                <div className="cards-row-container" style={{ padding: '30px 10px' }}>
+                <div className={`cards-row-container ${freeCardCount === 36 ? 'grand-tableau-grid' : ''}`} style={{ padding: '30px 10px' }}>
                   <div style={{ display: 'flex', flexDirection: 'column', gap: '20px', alignItems: 'center', width: '100%' }}>
                     {freeRows.map((rowCards, rowIndex) => (
                       <div 
@@ -1802,75 +1830,6 @@ export default function App() {
         </div>
       )}
 
-      {/* GOOGLE SIGN IN AUTH MODAL */}
-      {isAuthModalOpen && (
-        <div className="modal-overlay" onClick={() => setIsAuthModalOpen(false)}>
-          <div className="modal-content" style={{ maxWidth: '400px' }} onClick={(e) => e.stopPropagation()}>
-            <div className="modal-header">
-              <h2 style={{ fontSize: '18px', color: 'var(--text-gold)', margin: 0, display: 'flex', alignItems: 'center', gap: '8px' }}>
-                <LogIn size={20} />
-                구글 로그인
-              </h2>
-              <button className="modal-close" onClick={() => setIsAuthModalOpen(false)}>
-                <X size={20} />
-              </button>
-            </div>
-            
-            <div style={{ padding: '24px', display: 'flex', flexDirection: 'column', gap: '20px' }}>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                <label style={{ fontSize: '13px', fontWeight: 'bold', color: 'var(--text-gold)' }}>
-                  구글 OAuth Client ID:
-                </label>
-                <input 
-                  type="text" 
-                  className="parchment-input" 
-                  style={{ fontSize: '13px', height: '36px' }}
-                  placeholder="예: 123456789-abcdef.apps.googleusercontent.com"
-                  value={googleClientId}
-                  onChange={(e) => setGoogleClientId(e.target.value)}
-                />
-              </div>
-
-              {/* Google official login button target */}
-              {googleClientId ? (
-                <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '12px', margin: '10px 0' }}>
-                  <div ref={googleBtnContainerRef} id="google-signin-btn-container" />
-                  <span style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>
-                    위 버튼을 클릭하여 안전하게 구글 로그인을 진행합니다.
-                  </span>
-                </div>
-              ) : (
-                <div style={{ 
-                  backgroundColor: 'var(--panel-bg-alt)', 
-                  border: '1px solid var(--border-color)', 
-                  padding: '16px', 
-                  borderRadius: '6px',
-                  fontSize: '13px',
-                  color: 'var(--text-secondary)',
-                  textAlign: 'center',
-                  lineHeight: '1.6'
-                }}>
-                  구글 OAuth Client ID를 입력창에 설정하시면 실시간 클라우드 동기화 채널이 활성화됩니다.
-                </div>
-              )}
-
-              {/* Demo Mode Button */}
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', borderTop: '1px solid var(--border-color)', paddingTop: '16px' }}>
-                <button 
-                  className="gold-button-outline" 
-                  onClick={startDemoSession}
-                  style={{ width: '100%', height: '38px', fontSize: '13px' }}
-                >
-                  <Sparkles size={14} />
-                  데모 계정으로 간편 로그인 테스트
-                </button>
-              </div>
-
-            </div>
-          </div>
-        </div>
-      )}
-
       {/* SETTINGS AND BACKUP MODAL */}
       {isSettingsOpen && (
         <div className="modal-overlay" onClick={() => setIsSettingsOpen(false)}>
@@ -1892,15 +1851,33 @@ export default function App() {
                 <h3 style={{ fontSize: '15px', color: 'var(--text-gold)', margin: 0, borderBottom: '1px solid var(--border-color)', paddingBottom: '6px' }}>
                   1. 구글 로그인 설정
                 </h3>
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-                  <input 
-                    type="text" 
-                    className="parchment-input" 
-                    style={{ fontSize: '14px', height: '38px' }}
-                    placeholder="구글 클라이언트 ID를 입력하세요"
-                    value={googleClientId}
-                    onChange={(e) => setGoogleClientId(e.target.value)}
-                  />
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                    <label style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>구글 OAuth Client ID:</label>
+                    <input 
+                      type="text" 
+                      className="parchment-input" 
+                      style={{ fontSize: '14px', height: '38px' }}
+                      placeholder="구글 클라이언트 ID를 입력하세요 (예: 123456...)"
+                      value={googleClientId}
+                      onChange={(e) => setGoogleClientId(e.target.value)}
+                    />
+                  </div>
+                  
+                  {/* Demo Mode Button */}
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', borderTop: '1px dotted var(--border-color)', paddingTop: '10px' }}>
+                    <button 
+                      className="gold-button-outline" 
+                      onClick={() => {
+                        startDemoSession();
+                        setIsSettingsOpen(false);
+                      }}
+                      style={{ width: '100%', height: '38px', fontSize: '13px' }}
+                    >
+                      <Sparkles size={14} />
+                      데모 계정으로 간편 로그인 테스트
+                    </button>
+                  </div>
                 </div>
               </div>
 

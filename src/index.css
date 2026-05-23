@@ -49,22 +49,22 @@ body.theme-red-owl {
   --btn-hover: #18181b;
 }
 
-/* Theme 3: White Gold (Pure White & Antique Gold) - Whiter Clean Light */
+/* Theme 3: Mystic Forest (Deep Emerald Green & Antique Gold) - Dark Luxury */
 body.theme-classic-cream {
-  --bg-color: #ffffff;
-  --panel-bg: #ffffff;
-  --panel-bg-alt: #fafaf9;
-  --border-color: #d97706;
-  --text-primary: #1c1917;
-  --text-secondary: #78716c;
-  --text-gold: #b45309;
-  --input-bg: #ffffff;
-  --shadow-color: rgba(0, 0, 0, 0.04);
-  --accent-color: #b45309;
-  --badge-bg: #f5f5f4;
-  --btn-bg: #d97706;
+  --bg-color: #04160f;
+  --panel-bg: #0a2217;
+  --panel-bg-alt: #103022;
+  --border-color: #dfb76c;
+  --text-primary: #f3ebe1;
+  --text-secondary: #8da396;
+  --text-gold: #dfb76c;
+  --input-bg: #04160f;
+  --shadow-color: rgba(0, 0, 0, 0.4);
+  --accent-color: #dfb76c;
+  --badge-bg: #103022;
+  --btn-bg: #154734;
   --btn-text: #ffffff;
-  --btn-hover: #b45309;
+  --btn-hover: #0a2217;
 }
 
 body {
@@ -405,3 +405,84 @@ textarea.parchment-input {
     padding: 20px 10px;
   }
 }
+
+/* ======================================================== */
+/* Grand Tableau (36 Cards Layout) Custom Sizing Overrides  */
+/* ======================================================== */
+.grand-tableau-grid .cards-grid {
+  gap: 12px !important;
+}
+
+.grand-tableau-grid .card-slot-outer {
+  width: 112px;
+  height: 174px; /* Aspect ratio maintained beautifully */
+}
+
+/* Grand Tableau Placeholder text scaling and formatting */
+.grand-tableau-grid .card-owl-icon {
+  width: 32px;
+  height: 32px;
+}
+
+.grand-tableau-grid .card-back-placeholder {
+  padding: 8px;
+  gap: 8px;
+}
+
+.grand-tableau-grid .card-back-placeholder span:last-child {
+  display: none; /* Hide secondary helper text when card size is small */
+}
+
+.grand-tableau-grid .card-back-placeholder span.serif-font {
+  font-size: 11px !important;
+}
+
+/* Medium Screen scaling */
+@media (max-width: 1024px) {
+  .grand-tableau-grid .card-slot-outer {
+    width: 90px;
+    height: 140px;
+  }
+  .grand-tableau-grid .cards-grid {
+    gap: 8px !important;
+  }
+}
+
+/* Large Mobile / iPad vertical */
+@media (max-width: 768px) {
+  .grand-tableau-grid .card-slot-outer {
+    width: 70px;
+    height: 109px;
+  }
+  .grand-tableau-grid .cards-grid {
+    gap: 6px !important;
+  }
+  .grand-tableau-grid .card-owl-icon {
+    width: 24px;
+    height: 24px;
+  }
+  .grand-tableau-grid .card-back-placeholder span.serif-font {
+    font-size: 9px !important;
+  }
+}
+
+/* Small Mobile */
+@media (max-width: 480px) {
+  .grand-tableau-grid .card-slot-outer {
+    width: 42px;
+    height: 65px;
+  }
+  .grand-tableau-grid .cards-grid {
+    gap: 4px !important;
+  }
+  .grand-tableau-grid .card-owl-icon {
+    display: none; /* Hide svg on extremely small viewports */
+  }
+  .grand-tableau-grid .card-back-placeholder span.serif-font {
+    font-size: 8px !important;
+  }
+  .grand-tableau-grid .card-back-placeholder {
+    padding: 2px;
+  }
+}
+
