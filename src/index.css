@@ -1,4 +1,4 @@
-@import url('https://fonts.googleapis.com/css2?family=Cinzel:wght@400;500;600;700;800;900&family=Playfair+Display:ital,wght@0,400;0,500;0,600;0,700;1,400;1,500&family=Inter:wght@300;400;500;600;700&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,300;0,400;0,500;0,600;0,700;1,300;1,400&display=swap');
 @import url("https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/static/pretendard.css");
 
 /* Default reset & basic styles */
@@ -10,59 +10,65 @@
 
 :root {
   /* Common standard colors */
-  --gold-metallic: linear-gradient(135deg, #f3d289 0%, #dfb76c 50%, #c59b4c 100%);
-  --gold-flat: #dfb76c;
-  --gold-glow: rgba(223, 183, 108, 0.4);
-  --transition-speed: 0.3s;
+  --transition-speed: 0.25s;
 }
 
-/* Theme 1: Blue Owl (Mystic Navy & Gold) */
+/* Theme 1: Midnight (Modern Dark Blue & Sky) */
 body.theme-blue-owl {
-  --bg-color: #060913;
-  --panel-bg: #0e1424;
-  --panel-bg-alt: #161e33;
-  --border-color: #dfb76c;
-  --text-primary: #f5f6f8;
-  --text-secondary: #a3aabf;
-  --text-gold: #f3d289;
-  --input-bg: #090d18;
-  --shadow-color: rgba(0, 0, 0, 0.6);
-  --accent-color: #1e3a8a;
-  --badge-bg: #1c2642;
+  --bg-color: #0b0f19;
+  --panel-bg: #151c2c;
+  --panel-bg-alt: #1e293b;
+  --border-color: #38bdf8;
+  --text-primary: #f8fafc;
+  --text-secondary: #94a3b8;
+  --text-gold: #38bdf8;
+  --input-bg: #0b0f19;
+  --shadow-color: rgba(0, 0, 0, 0.4);
+  --accent-color: #0284c7;
+  --badge-bg: #1e293b;
+  --btn-bg: #0284c7;
+  --btn-text: #ffffff;
+  --btn-hover: #0369a1;
 }
 
-/* Theme 2: Red Owl (Mystic Crimson & Gold) */
+/* Theme 2: Minimal Zinc (Cream & Charcoal) - Minimal Light */
 body.theme-red-owl {
-  --bg-color: #120303;
-  --panel-bg: #1e0b0b;
-  --panel-bg-alt: #2a1212;
-  --border-color: #e5c185;
-  --text-primary: #fdf8f5;
-  --text-secondary: #cfa8a8;
-  --text-gold: #f5d496;
-  --input-bg: #150606;
-  --shadow-color: rgba(0, 0, 0, 0.7);
-  --accent-color: #7f1d1d;
-  --badge-bg: #351515;
+  --bg-color: #fafafa;
+  --panel-bg: #ffffff;
+  --panel-bg-alt: #f4f4f5;
+  --border-color: #27272a;
+  --text-primary: #09090b;
+  --text-secondary: #52525b;
+  --text-gold: #18181b;
+  --input-bg: #ffffff;
+  --shadow-color: rgba(0, 0, 0, 0.05);
+  --accent-color: #18181b;
+  --badge-bg: #e4e4e7;
+  --btn-bg: #27272a;
+  --btn-text: #ffffff;
+  --btn-hover: #18181b;
 }
 
-/* Theme 3: Classic Cream (Vintage Paper & Sepia) */
+/* Theme 3: White Gold (Pure White & Antique Gold) - Whiter Clean Light */
 body.theme-classic-cream {
-  --bg-color: #f7f3e8;
-  --panel-bg: #fdfaf2;
-  --panel-bg-alt: #f1ebd8;
-  --border-color: #5c4033;
-  --text-primary: #2c1e18;
-  --text-secondary: #6e584f;
-  --text-gold: #8b5a2b;
-  --input-bg: #f7f3e8;
-  --shadow-color: rgba(92, 64, 51, 0.15);
-  --accent-color: #8b4513;
-  --badge-bg: #eae0ca;
+  --bg-color: #ffffff;
+  --panel-bg: #ffffff;
+  --panel-bg-alt: #fafaf9;
+  --border-color: #d97706;
+  --text-primary: #1c1917;
+  --text-secondary: #78716c;
+  --text-gold: #b45309;
+  --input-bg: #ffffff;
+  --shadow-color: rgba(0, 0, 0, 0.04);
+  --accent-color: #b45309;
+  --badge-bg: #f5f5f4;
+  --btn-bg: #d97706;
+  --btn-text: #ffffff;
+  --btn-hover: #b45309;
 }
 
 body {
-  font-family: 'Pretendard', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, 'Inter', sans-serif;
+  font-family: 'Eulyoo1945', 'Pretendard', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, serif;
   letter-spacing: -0.03em;
   background-color: var(--bg-color);
   color: var(--text-primary);
@@ -90,52 +96,45 @@ body {
 
 /* Typography styles */
 h1, h2, h3, h4, .serif-font {
-  font-family: 'Pretendard', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, 'Inter', sans-serif;
-  letter-spacing: -0.03em;
+  font-family: 'Cormorant Garamond', 'Eulyoo1945', 'Pretendard', -apple-system, BlinkMacSystemFont, serif;
+  letter-spacing: -0.01em;
 }
 
 p, span, input, textarea, select, button {
-  font-family: 'Pretendard', -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+  font-family: 'Eulyoo1945', 'Pretendard', -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
   letter-spacing: -0.03em;
-}
-
-.title-ornament {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 15px;
-  margin-bottom: 5px;
 }
 
 .title-ornament::before, .title-ornament::after {
   content: "";
   display: block;
   height: 2px;
-  width: 60px;
-  background: var(--gold-metallic);
+  width: 40px;
+  background: var(--border-color);
+  opacity: 0.4;
 }
 
-/* Double bordered container helper */
+/* Clean single bordered modern card layout */
 .double-border {
   border: 1px solid var(--border-color);
-  padding: 4px;
-  border-radius: 4px;
+  border-radius: 8px;
+  background-color: var(--panel-bg);
+  box-shadow: 0 4px 12px var(--shadow-color);
+  overflow: hidden;
 }
 
 .double-border-inner {
-  border: 2px solid var(--border-color);
   padding: 24px;
   background-color: var(--panel-bg);
-  border-radius: 2px;
-  box-shadow: 0 10px 30px var(--shadow-color);
+  border-radius: 8px;
 }
 
-/* Classic vintage panels */
+/* Classic clean panels */
 .vintage-panel {
   background-color: var(--panel-bg);
   border: 1px solid var(--border-color);
-  box-shadow: 0 4px 20px var(--shadow-color);
-  border-radius: 4px;
+  box-shadow: 0 2px 8px var(--shadow-color);
+  border-radius: 8px;
   padding: 20px;
   transition: background-color var(--transition-speed), border-color var(--transition-speed);
 }
@@ -155,14 +154,14 @@ p, span, input, textarea, select, button {
 }
 
 .parchment-input:focus {
-  border-color: var(--text-gold);
-  box-shadow: 0 0 10px var(--gold-glow);
+  border-color: var(--border-color);
+  box-shadow: 0 0 6px rgba(0, 0, 0, 0.08);
 }
 
 textarea.parchment-input {
   resize: vertical;
   min-height: 110px;
-  font-family: 'Pretendard', -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+  font-family: 'Eulyoo1945', 'Pretendard', -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
   font-size: 16px;
   letter-spacing: -0.03em;
 }
@@ -170,7 +169,7 @@ textarea.parchment-input {
 /* Cards Layout Container */
 .cards-row-container {
   background-color: var(--panel-bg-alt);
-  border: 1px dashed var(--border-color);
+  border: 1px solid var(--border-color);
   border-radius: 8px;
   padding: 30px 15px;
   margin-bottom: 30px;
@@ -211,8 +210,8 @@ textarea.parchment-input {
 }
 
 .card-slot-outer:hover .card-slot-inner {
-  transform: translateY(-8px);
-  box-shadow: 0 12px 24px var(--shadow-color), 0 0 15px var(--gold-glow);
+  transform: translateY(-6px);
+  box-shadow: 0 8px 20px var(--shadow-color);
 }
 
 .card-face {
@@ -243,7 +242,7 @@ textarea.parchment-input {
   width: 100%;
   height: 100%;
   background-color: var(--panel-bg);
-  border: 2px solid var(--border-color);
+  border: 1px solid var(--border-color);
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -255,56 +254,48 @@ textarea.parchment-input {
 }
 
 .card-back-placeholder::before {
-  content: "";
-  position: absolute;
-  top: 6px;
-  left: 6px;
-  right: 6px;
-  bottom: 6px;
-  border: 1px dashed var(--border-color);
-  pointer-events: none;
-  opacity: 0.6;
+  content: none; /* Remove nested dashed border for simpler look */
 }
 
 .card-owl-icon {
-  width: 48px;
-  height: 48px;
-  opacity: 0.65;
+  width: 44px;
+  height: 44px;
+  opacity: 0.4;
   stroke: var(--border-color);
-  stroke-width: 1.2px;
+  stroke-width: 1px;
   fill: none;
   transition: transform var(--transition-speed);
 }
 
 .card-slot-outer:hover .card-owl-icon {
-  transform: scale(1.1) rotate(5deg);
-  opacity: 0.9;
+  transform: scale(1.05);
+  opacity: 0.8;
 }
 
-/* Buttons */
+/* Buttons - Bold, flat, and modern */
 .gold-button {
-  background: var(--gold-metallic);
-  color: #1a1508;
-  border: none;
-  border-radius: 4px;
-  padding: 10px 20px;
+  background: var(--btn-bg);
+  color: var(--btn-text);
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  padding: 10px 22px;
   font-weight: 700;
-  font-size: 14px;
+  font-size: 15px;
   letter-spacing: -0.03em;
-  text-transform: uppercase;
+  text-transform: none;
   cursor: pointer;
-  box-shadow: 0 4px 10px rgba(0,0,0,0.3);
+  box-shadow: 0 2px 4px var(--shadow-color);
   display: inline-flex;
   align-items: center;
   justify-content: center;
   gap: 8px;
-  transition: transform 0.2s, box-shadow 0.2s, filter 0.2s;
+  transition: transform 0.15s, box-shadow 0.15s, background-color 0.15s;
 }
 
 .gold-button:hover {
-  transform: translateY(-2px);
-  box-shadow: 0 6px 14px var(--gold-glow);
-  filter: brightness(1.05);
+  transform: translateY(-1px);
+  background-color: var(--btn-hover);
+  box-shadow: 0 4px 8px var(--shadow-color);
 }
 
 .gold-button:active {
@@ -315,10 +306,10 @@ textarea.parchment-input {
   background: transparent;
   color: var(--text-gold);
   border: 1px solid var(--border-color);
-  border-radius: 4px;
+  border-radius: 6px;
   padding: 9px 18px;
   font-weight: 600;
-  font-size: 14px;
+  font-size: 15px;
   cursor: pointer;
   display: inline-flex;
   align-items: center;
@@ -328,9 +319,9 @@ textarea.parchment-input {
 }
 
 .gold-button-outline:hover {
-  background-color: var(--border-color);
-  color: #1a1508;
-  box-shadow: 0 0 10px var(--gold-glow);
+  background-color: var(--btn-bg);
+  color: var(--btn-text);
+  box-shadow: 0 2px 6px var(--shadow-color);
 }
 
 /* Modal Styling */

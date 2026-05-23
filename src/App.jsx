@@ -92,6 +92,16 @@ export default function App() {
 
   // Helper to chunk cards array into rows
   const chunkCards = (arr, size) => {
+    if (arr.length === 36) {
+      // Grand Tableau custom chunking: 8, 8, 8, 8, 4
+      return [
+        arr.slice(0, 8),
+        arr.slice(8, 16),
+        arr.slice(16, 24),
+        arr.slice(24, 32),
+        arr.slice(32, 36)
+      ];
+    }
     const chunks = [];
     for (let i = 0; i < arr.length; i += size) {
       chunks.push(arr.slice(i, i + size));
@@ -357,7 +367,7 @@ export default function App() {
 
     if (entry.type === 'daily') {
       setDailyCardCount(entry.cardCount);
-      setDailyCols(entry.cols || entry.cardCount);
+      setDailyCols(entry.cardCount === 36 ? 8 : (entry.cols || entry.cardCount));
       setDailyDate(entry.date || '');
       setDailyCards(entry.cards.map(id => id ? LENORMAND_CARDS.find(c => c.id === id) : null));
       setDailyMemos(entry.memos || {});
@@ -366,7 +376,7 @@ export default function App() {
     } else {
       setFreeQuestion(entry.question || '');
       setFreeCardCount(entry.cardCount);
-      setFreeCols(entry.cols || entry.cardCount);
+      setFreeCols(entry.cardCount === 36 ? 8 : (entry.cols || entry.cardCount));
       setFreeCards(entry.cards.map(id => id ? LENORMAND_CARDS.find(c => c.id === id) : null));
       setFreePrediction(entry.prediction || '');
       setFreeFeedback(entry.feedback || '');
@@ -448,7 +458,7 @@ export default function App() {
   const handleDailyCardCountChange = (count) => {
     setDailyCardCount(count);
     if (count === 36) {
-      setDailyCols(9);
+      setDailyCols(8);
     } else {
       setDailyCols(count);
     }
@@ -468,7 +478,7 @@ export default function App() {
   const handleFreeCardCountChange = (count) => {
     setFreeCardCount(count);
     if (count === 36) {
-      setFreeCols(9);
+      setFreeCols(8);
     } else {
       setFreeCols(count);
     }
@@ -521,7 +531,7 @@ export default function App() {
           <span className="serif-font" style={{ fontSize: '18px', color: 'var(--text-gold)' }}>
             구글 클라우드 동기화 중...
           </span>
-          <span style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>
+          <span style={{ fontSize: '14px', color: 'var(--text-secondary)' }}>
             보안 채널을 통해 저널 데이터를 암호화하여 업로드/다운로드하고 있습니다.
           </span>
         </div>
@@ -546,7 +556,7 @@ export default function App() {
             <h1 style={{ fontSize: '20px', color: 'var(--text-gold)', fontWeight: 800, margin: 0 }}>
               LENORMAND JOURNAL
             </h1>
-            <p style={{ fontSize: '11px', color: 'var(--text-secondary)', margin: 0 }}>
+            <p style={{ fontSize: '13px', color: 'var(--text-secondary)', margin: 0 }}>
               레노먼드 오라클 카드 기록장 & 클라우드
             </p>
           </div>
@@ -818,7 +828,7 @@ export default function App() {
                     
                     {/* Total Cards Selector */}
                     <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                      <span style={{ fontSize: '13px', color: 'var(--text-secondary)' }}>총 카드 수:</span>
+                      <span style={{ fontSize: '15px', color: 'var(--text-secondary)' }}>총 카드 수:</span>
                       <select
                         className="parchment-input"
                         style={{ height: '36px', padding: '0 12px', width: '180px', fontSize: '14px', fontWeight: 'bold' }}
@@ -834,7 +844,7 @@ export default function App() {
 
                     {/* Columns Selector */}
                     <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                      <span style={{ fontSize: '13px', color: 'var(--text-secondary)' }}>한 줄당 카드 수:</span>
+                      <span style={{ fontSize: '15px', color: 'var(--text-secondary)' }}>한 줄당 카드 수:</span>
                       <div style={{ display: 'flex', alignItems: 'center', border: '1px solid var(--border-color)', borderRadius: '4px', overflow: 'hidden' }}>
                         <button 
                           onClick={() => setDailyCols(prev => Math.max(1, prev - 1))}
@@ -861,7 +871,7 @@ export default function App() {
 
                 {/* Helper info on active Grid alignment */}
                 <div style={{ 
-                  fontSize: '12px', 
+                  fontSize: '14px', 
                   color: 'var(--text-secondary)', 
                   marginBottom: '16px', 
                   display: 'flex', 
@@ -869,9 +879,12 @@ export default function App() {
                   gap: '6px',
                   justifyContent: 'center'
                 }}>
-                  <Grid size={13} style={{ color: 'var(--text-gold)' }} />
+                  <Grid size={14} style={{ color: 'var(--text-gold)' }} />
                   <span>
-                    포메이션 정보: 총 <b>{dailyCardCount}</b>장의 카드가 가로 <b>{dailyCols}</b>개씩 <b>{Math.ceil(dailyCardCount / dailyCols)}</b>줄로 가운데 정렬 배치됩니다.
+                    {dailyCardCount === 36
+                      ? <span>포메이션 정보: 총 <b>36</b>장의 카드가 그랜드 테블루 <b>(8x4 + 4)</b> 형태로 가운데 정렬 배치됩니다.</span>
+                      : <span>포메이션 정보: 총 <b>{dailyCardCount}</b>장의 카드가 가로 <b>{dailyCols}</b>개씩 <b>{Math.ceil(dailyCardCount / dailyCols)}</b>줄로 가운데 정렬 배치됩니다.</span>
+                    }
                   </span>
                 </div>
 
@@ -983,15 +996,15 @@ export default function App() {
                         {/* Text fields */}
                         <div style={{ flex: 1, minWidth: '240px', display: 'flex', flexDirection: 'column', gap: '4px' }}>
                           <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                            <span style={{ fontSize: '12px', color: 'var(--text-gold)', fontWeight: 'bold' }}>슬롯 {idx + 1}</span>
-                            <span className="serif-font" style={{ fontSize: '15px', fontWeight: 'bold', color: 'var(--text-primary)' }}>
+                            <span style={{ fontSize: '14px', color: 'var(--text-gold)', fontWeight: 'bold' }}>슬롯 {idx + 1}</span>
+                            <span className="serif-font" style={{ fontSize: '17px', fontWeight: 'bold', color: 'var(--text-primary)' }}>
                               {card.id}. {card.nameEn} ({card.nameKo})
                             </span>
                           </div>
 
                           {/* Recommended Keywords */}
                           <div style={{ 
-                            fontSize: '11px', 
+                            fontSize: '13px', 
                             color: 'var(--text-secondary)', 
                             opacity: 0.6, 
                             fontStyle: 'italic',
@@ -999,7 +1012,7 @@ export default function App() {
                             alignItems: 'center',
                             gap: '4px'
                           }}>
-                            <Info size={12} />
+                            <Info size={14} />
                             추천 상징: {card.keywords}
                           </div>
 
@@ -1138,7 +1151,7 @@ export default function App() {
                     
                     {/* Total Cards Selector */}
                     <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                      <span style={{ fontSize: '13px', color: 'var(--text-secondary)' }}>총 카드 수:</span>
+                      <span style={{ fontSize: '15px', color: 'var(--text-secondary)' }}>총 카드 수:</span>
                       <select
                         className="parchment-input"
                         style={{ height: '36px', padding: '0 12px', width: '180px', fontSize: '14px', fontWeight: 'bold' }}
@@ -1154,7 +1167,7 @@ export default function App() {
 
                     {/* Columns Selector */}
                     <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                      <span style={{ fontSize: '13px', color: 'var(--text-secondary)' }}>한 줄당 카드 수:</span>
+                      <span style={{ fontSize: '15px', color: 'var(--text-secondary)' }}>한 줄당 카드 수:</span>
                       <div style={{ display: 'flex', alignItems: 'center', border: '1px solid var(--border-color)', borderRadius: '4px', overflow: 'hidden' }}>
                         <button 
                           onClick={() => setFreeCols(prev => Math.max(1, prev - 1))}
@@ -1181,7 +1194,7 @@ export default function App() {
 
                 {/* Helper info on active Grid alignment */}
                 <div style={{ 
-                  fontSize: '12px', 
+                  fontSize: '14px', 
                   color: 'var(--text-secondary)', 
                   marginBottom: '16px', 
                   display: 'flex', 
@@ -1189,9 +1202,12 @@ export default function App() {
                   gap: '6px',
                   justifyContent: 'center'
                 }}>
-                  <Grid size={13} style={{ color: 'var(--text-gold)' }} />
+                  <Grid size={14} style={{ color: 'var(--text-gold)' }} />
                   <span>
-                    포메이션 정보: 총 <b>{freeCardCount}</b>장의 카드가 가로 <b>{freeCols}</b>개씩 <b>{Math.ceil(freeCardCount / freeCols)}</b>줄로 가운데 정렬 배치됩니다.
+                    {freeCardCount === 36
+                      ? <span>포메이션 정보: 총 <b>36</b>장의 카드가 그랜드 테블루 <b>(8x4 + 4)</b> 형태로 가운데 정렬 배치됩니다.</span>
+                      : <span>포메이션 정보: 총 <b>{freeCardCount}</b>장의 카드가 가로 <b>{freeCols}</b>개씩 <b>{Math.ceil(freeCardCount / freeCols)}</b>줄로 가운데 정렬 배치됩니다.</span>
+                    }
                   </span>
                 </div>
 
