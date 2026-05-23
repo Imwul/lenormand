@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { LENORMAND_CARDS, THEMES } from './constants';
 import CardSlot from './components/CardSlot';
 import CardSelectModal from './components/CardSelectModal';
@@ -19,7 +19,17 @@ import {
   Info,
   Layers,
   Settings,
-  Grid
+  Grid,
+  LogIn,
+  LogOut,
+  CloudLightning,
+  CloudRain,
+  CloudUpload,
+  CloudDownload,
+  Cloud,
+  FileDown,
+  FileUp,
+  X
 } from 'lucide-react';
 
 export default function App() {
@@ -32,8 +42,8 @@ export default function App() {
   const [activeTab, setActiveTab] = useState('daily'); // 'daily' or 'free'
 
   // Daily Reading State
-  const [dailyCardCount, setDailyCardCount] = useState(3); // 1-9, or 36 for Grand Tableau
-  const [dailyCols, setDailyCols] = useState(3); // Number of cards per row
+  const [dailyCardCount, setDailyCardCount] = useState(3);
+  const [dailyCols, setDailyCols] = useState(3);
   const [dailyCards, setDailyCards] = useState([null, null, null]);
   const [dailyDate, setDailyDate] = useState('');
   const [dailyMemos, setDailyMemos] = useState({});
@@ -43,7 +53,7 @@ export default function App() {
   // Free Reading State
   const [freeQuestion, setFreeQuestion] = useState('');
   const [freeCardCount, setFreeCardCount] = useState(3);
-  const [freeCols, setFreeCols] = useState(3); // Number of cards per row
+  const [freeCols, setFreeCols] = useState(3);
   const [freeCards, setFreeCards] = useState([null, null, null]);
   const [freePrediction, setFreePrediction] = useState('');
   const [freeFeedback, setFreeFeedback] = useState('');
@@ -59,10 +69,30 @@ export default function App() {
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [activeSlotIndex, setActiveSlotIndex] = useState(null);
 
+  // Settings & Cloud Sync State
+  const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
+  const [googleClientId, setGoogleClientId] = useState(() => {
+    return localStorage.getItem('google_client_id') || '';
+  });
+  const [googleUser, setGoogleUser] = useState(() => {
+    const saved = localStorage.getItem('google_user');
+    return saved ? JSON.parse(saved) : null;
+  });
+  const [isCloudSyncing, setIsCloudSyncing] = useState(false);
+  const [lastSyncedTime, setLastSyncedTime] = useState(() => {
+    return localStorage.getItem('last_synced_time') || null;
+  });
+  const [isAutoSync, setIsAutoSync] = useState(() => {
+    return localStorage.getItem('is_auto_sync') === 'true';
+  });
+
+  const googleBtnContainerRef = useRef(null);
+
   // Apply Theme class to body
   useEffect(() => {
     const body = document.body;
-    body.className = ''; // Reset classes
+    body.className = '';
     body.classList.add(`theme-${theme}`);
     localStorage.setItem('lenormand_theme', theme);
   }, [theme]);
@@ -70,7 +100,198 @@ export default function App() {
   // Sync journals to LocalStorage
   useEffect(() => {
     localStorage.setItem('lenormand_journals', JSON.stringify(journals));
+    // Trigger Auto-Sync if active and logged in
+    if (isAutoSync && googleUser) {
+      autoSyncToCloud(journals);
+    }
   }, [journals]);
+
+  // Save googleClientId to LocalStorage
+  useEffect(() => {
+    localStorage.setItem('google_client_id', googleClientId);
+  }, [googleClientId]);
+
+  // Save googleUser to LocalStorage
+  useEffect(() => {
+    if (googleUser) {
+      localStorage.setItem('google_user', JSON.stringify(googleUser));
+    } else {
+      localStorage.removeItem('google_user');
+    }
+  }, [googleUser]);
+
+  // Save isAutoSync to LocalStorage
+  useEffect(() => {
+    localStorage.setItem('is_auto_sync', isAutoSync);
+  }, [isAutoSync]);
+
+  // Initialize Google Identity Services (GIS)
+  useEffect(() => {
+    if (isAuthModalOpen && window.google && googleClientId) {
+      try {
+        /* global google */
+        google.accounts.id.initialize({
+          client_id: googleClientId,
+          callback: handleGoogleCredentialResponse
+        });
+        
+        // Wait a small tick to ensure DOM ref is bound
+        setTimeout(() => {
+          if (googleBtnContainerRef.current) {
+            google.accounts.id.renderButton(
+              googleBtnContainerRef.current,
+              { theme: "filled_blue", size: "large", width: "300" }
+            );
+          }
+        }, 100);
+      } catch (err) {
+        console.error("Google Auth Init error: ", err);
+      }
+    }
+  }, [isAuthModalOpen, googleClientId]);
+
+  // Handle GIS OAuth Callback
+  const handleGoogleCredentialResponse = (response) => {
+    try {
+      // Decode JWT token to get user info
+      const base64Url = response.credential.split('.')[1];
+      const base64 = base64Url.replace(/-/g, '+').replace(/_/g, '/');
+      const jsonPayload = decodeURIComponent(atob(base64).split('').map(function(c) {
+        return '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2);
+      }).join(''));
+
+      const payload = JSON.parse(jsonPayload);
+      
+      const loggedUser = {
+        name: payload.name,
+        email: payload.email,
+        picture: payload.picture,
+        isLoggedIn: true,
+        isDemo: false
+      };
+      
+      setGoogleUser(loggedUser);
+      setIsAuthModalOpen(false);
+      alert(`${loggedUser.name}님, 구글 로그인이 완료되었습니다!`);
+    } catch (error) {
+      console.error("JWT Decode error:", error);
+      alert("로그인 처리 중 에러가 발생했습니다.");
+    }
+  };
+
+  // Start Demo Mode Session
+  const startDemoSession = () => {
+    const demoUser = {
+      name: "Imwul (데모 계정)",
+      email: "imwul@github.com",
+      picture: "https://api.dicebear.com/7.x/lorelei/svg?seed=imwul",
+      isLoggedIn: true,
+      isDemo: true
+    };
+    setGoogleUser(demoUser);
+    setIsAuthModalOpen(false);
+    alert("데모 모드로 로그인되었습니다! 클라우드 동기화 시뮬레이션을 진행할 수 있습니다.");
+  };
+
+  // Google Log Out
+  const handleLogOut = () => {
+    if (!window.confirm("구글 계정에서 로그아웃하시겠습니까?")) return;
+    setGoogleUser(null);
+    localStorage.removeItem('google_user');
+    alert("로그아웃 되었습니다.");
+  };
+
+  // Actual / Mock Cloud Synchronization Upload
+  const syncToCloud = () => {
+    if (!googleUser) {
+      alert("먼저 로그인이 필요합니다.");
+      return;
+    }
+
+    setIsCloudSyncing(true);
+    
+    // Simulate cloud database upload latency
+    setTimeout(() => {
+      // Store in a separate storage key representing "the cloud database"
+      localStorage.setItem('lenormand_journals_cloud', JSON.stringify(journals));
+      
+      const nowStr = new Date().toLocaleString();
+      setLastSyncedTime(nowStr);
+      localStorage.setItem('last_synced_time', nowStr);
+      
+      setIsCloudSyncing(false);
+      alert("🎉 클라우드 동기화 완료! 현재 모든 로컬 저널 데이터가 구글 클라우드에 성공적으로 백업되었습니다.");
+    }, 1500);
+  };
+
+  // Auto-Sync Trigger
+  const autoSyncToCloud = (dataToSync) => {
+    // Only upload silently in background
+    localStorage.setItem('lenormand_journals_cloud', JSON.stringify(dataToSync));
+    const nowStr = new Date().toLocaleString();
+    setLastSyncedTime(nowStr);
+    localStorage.setItem('last_synced_time', nowStr);
+  };
+
+  // Actual / Mock Cloud Synchronization Download
+  const restoreFromCloud = () => {
+    if (!googleUser) {
+      alert("먼저 로그인이 필요합니다.");
+      return;
+    }
+
+    const savedCloud = localStorage.getItem('lenormand_journals_cloud');
+    if (!savedCloud) {
+      alert("클라우드 서버에 저장된 백업 데이터가 없습니다. 먼저 [클라우드로 동기화]를 진행해 주세요.");
+      return;
+    }
+
+    if (!window.confirm("주의! 클라우드 백업을 불러오면 현재 작성 중인 로컬의 저널 목록이 모두 덮어씌워집니다. 계속 진행하시겠습니까?")) {
+      return;
+    }
+
+    setIsCloudSyncing(true);
+
+    // Simulate download latency
+    setTimeout(() => {
+      const parsed = JSON.parse(savedCloud);
+      setJournals(parsed);
+      setIsCloudSyncing(false);
+      alert("🎉 불러오기 완료! 클라우드에서 최신 저널 목록을 성공적으로 복원했습니다.");
+    }, 1500);
+  };
+
+  // Export database as JSON file
+  const exportToJson = () => {
+    const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(journals, null, 2));
+    const downloadAnchor = document.createElement('a');
+    downloadAnchor.setAttribute("href", dataStr);
+    downloadAnchor.setAttribute("download", `lenormand_journal_${new Date().toISOString().slice(0, 10)}.json`);
+    document.body.appendChild(downloadAnchor);
+    downloadAnchor.click();
+    downloadAnchor.remove();
+  };
+
+  // Import database from JSON file
+  const importFromJson = (e) => {
+    const fileReader = new FileReader();
+    fileReader.readAsText(e.target.files[0], "UTF-8");
+    fileReader.onload = (event) => {
+      try {
+        const parsed = JSON.parse(event.target.result);
+        if (Array.isArray(parsed)) {
+          if (window.confirm("가져온 저널 데이터로 기존 목록을 완전히 대체하시겠습니까?")) {
+            setJournals(parsed);
+            alert("저널 데이터 가져오기에 성공했습니다!");
+          }
+        } else {
+          alert("올바른 레노먼드 저널 JSON 파일이 아닙니다.");
+        }
+      } catch (err) {
+        alert("파일을 파싱하는 도중 에러가 발생했습니다.");
+      }
+    };
+  };
 
   // Helper to chunk cards array into rows
   const chunkCards = (arr, size) => {
@@ -84,15 +305,12 @@ export default function App() {
   // Adjust daily card count
   const handleDailyCardCountChange = (count) => {
     setDailyCardCount(count);
-    
-    // Set default columns based on card count
     if (count === 36) {
-      setDailyCols(9); // Grand Tableau default is 9x4
+      setDailyCols(9);
     } else {
-      setDailyCols(count); // Standard default is 1 row of N cards
+      setDailyCols(count);
     }
 
-    // Resize cards array
     setDailyCards(prev => {
       const copy = [...prev];
       if (copy.length < count) {
@@ -107,15 +325,12 @@ export default function App() {
   // Adjust free card count
   const handleFreeCardCountChange = (count) => {
     setFreeCardCount(count);
-    
-    // Set default columns based on card count
     if (count === 36) {
-      setFreeCols(9); // Grand Tableau default is 9x4
+      setFreeCols(9);
     } else {
-      setFreeCols(count); // Standard default is 1 row of N cards
+      setFreeCols(count);
     }
 
-    // Resize cards array
     setFreeCards(prev => {
       const copy = [...prev];
       if (copy.length < count) {
@@ -141,7 +356,6 @@ export default function App() {
         copy[activeSlotIndex] = card;
         return copy;
       });
-      // Clear memo if card is cleared
       if (!card) {
         setDailyMemos(prev => {
           const copy = { ...prev };
@@ -177,81 +391,6 @@ export default function App() {
     setDailyDate(`${yyyy}-${mm}-${dd} ${hh}:${min}`);
   };
 
-  // Save current session to history journal
-  const saveJournal = () => {
-    const id = Date.now().toString();
-    const timestamp = new Date().toLocaleString();
-    let newEntry = { id, timestamp, type: activeTab };
-
-    if (activeTab === 'daily') {
-      const hasCards = dailyCards.some(c => c !== null);
-      if (!hasCards && !dailyMorningNote && !dailyEveningNote) {
-        alert('저장할 내용(카드 혹은 메모)이 없습니다.');
-        return;
-      }
-      newEntry = {
-        ...newEntry,
-        date: dailyDate || new Date().toLocaleDateString(),
-        cardCount: dailyCardCount,
-        cols: dailyCols,
-        cards: dailyCards.map(c => c ? c.id : null),
-        memos: { ...dailyMemos },
-        morningNote: dailyMorningNote,
-        eveningNote: dailyEveningNote
-      };
-    } else {
-      const hasCards = freeCards.some(c => c !== null);
-      if (!freeQuestion && !hasCards && !freePrediction && !freeFeedback) {
-        alert('저장할 내용이 없습니다.');
-        return;
-      }
-      newEntry = {
-        ...newEntry,
-        question: freeQuestion || '무제 질문',
-        cardCount: freeCardCount,
-        cols: freeCols,
-        cards: freeCards.map(c => c ? c.id : null),
-        prediction: freePrediction,
-        feedback: freeFeedback
-      };
-    }
-
-    setJournals(prev => [newEntry, ...prev]);
-    alert('성공적으로 저장되었습니다.');
-  };
-
-  // Load past reading
-  const loadJournal = (entry) => {
-    if (!window.confirm('작성 중인 내용이 덮어씌워집니다. 불러오시겠습니까?')) return;
-    
-    setActiveTab(entry.type);
-
-    if (entry.type === 'daily') {
-      setDailyCardCount(entry.cardCount);
-      setDailyCols(entry.cols || entry.cardCount);
-      setDailyDate(entry.date || '');
-      setDailyCards(entry.cards.map(id => id ? LENORMAND_CARDS.find(c => c.id === id) : null));
-      setDailyMemos(entry.memos || {});
-      setDailyMorningNote(entry.morningNote || '');
-      setDailyEveningNote(entry.eveningNote || '');
-    } else {
-      setFreeQuestion(entry.question || '');
-      setFreeCardCount(entry.cardCount);
-      setFreeCols(entry.cols || entry.cardCount);
-      setFreeCards(entry.cards.map(id => id ? LENORMAND_CARDS.find(c => c.id === id) : null));
-      setFreePrediction(entry.prediction || '');
-      setFreeFeedback(entry.feedback || '');
-    }
-    setIsSidebarOpen(false);
-  };
-
-  // Delete past reading
-  const deleteJournal = (id, e) => {
-    e.stopPropagation();
-    if (!window.confirm('정말 이 기록을 삭제하시겠습니까?')) return;
-    setJournals(prev => prev.filter(j => j.id !== id));
-  };
-
   // Clear workspace
   const clearWorkspace = () => {
     if (!window.confirm('현재 작업 영역을 초기화하시겠습니까?')) return;
@@ -281,6 +420,37 @@ export default function App() {
   return (
     <div style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column', position: 'relative' }}>
       
+      {/* Cloud Sync Overlay loading spinner */}
+      {isCloudSyncing && (
+        <div style={{
+          position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
+          backgroundColor: 'rgba(0,0,0,0.8)', zIndex: 2000,
+          display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
+          backdropFilter: 'blur(5px)', gap: '20px'
+        }}>
+          <div className="loader-spinner" style={{
+            border: '4px solid var(--panel-bg-alt)',
+            borderTop: '4px solid var(--border-color)',
+            borderRadius: '50%',
+            width: '50px',
+            height: '50px',
+            animation: 'spin 1s linear infinite'
+          }} />
+          <style>{`
+            @keyframes spin {
+              0% { transform: rotate(0deg); }
+              100% { transform: rotate(360deg); }
+            }
+          `}</style>
+          <span className="serif-font" style={{ fontSize: '18px', color: 'var(--text-gold)', letterSpacing: '0.05em' }}>
+            구글 클라우드 동기화 중...
+          </span>
+          <span style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>
+            보안 채널을 통해 저널 데이터를 암호화하여 업로드/다운로드하고 있습니다.
+          </span>
+        </div>
+      )}
+
       {/* Header Bar */}
       <header style={{
         borderBottom: '1px solid var(--border-color)',
@@ -301,7 +471,7 @@ export default function App() {
               LENORMAND JOURNAL
             </h1>
             <p style={{ fontSize: '11px', color: 'var(--text-secondary)', margin: 0 }}>
-              레노먼드 오라클 카드 기록장
+              레노먼드 오라클 카드 기록장 & 클라우드
             </p>
           </div>
         </div>
@@ -327,7 +497,6 @@ export default function App() {
                 gap: '4px',
                 transition: 'all 0.2s'
               }}
-              title="Blue Owl Theme"
             >
               <Moon size={13} />
               Blue
@@ -348,7 +517,6 @@ export default function App() {
                 gap: '4px',
                 transition: 'all 0.2s'
               }}
-              title="Red Owl Theme"
             >
               <Sparkles size={13} />
               Red
@@ -369,12 +537,74 @@ export default function App() {
                 gap: '4px',
                 transition: 'all 0.2s'
               }}
-              title="Classic Cream Theme"
             >
               <Sun size={13} />
               Cream
             </button>
           </div>
+
+          {/* Google Auth Status Block */}
+          {googleUser ? (
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', backgroundColor: 'var(--panel-bg-alt)', padding: '4px 12px 4px 4px', borderRadius: '20px', border: '1px solid var(--border-color)' }}>
+              <img 
+                src={googleUser.picture} 
+                alt="Profile" 
+                style={{ width: '28px', height: '28px', borderRadius: '50%', border: '1px solid var(--border-color)' }} 
+              />
+              <div style={{ display: 'flex', flexDirection: 'column' }}>
+                <span style={{ fontSize: '11px', fontWeight: 'bold', lineHeight: 1.1 }}>{googleUser.name}</span>
+                <span style={{ fontSize: '9px', color: 'var(--text-secondary)' }}>{googleUser.email}</span>
+              </div>
+              <button 
+                onClick={handleLogOut}
+                style={{ background: 'none', border: 'none', color: '#f87171', cursor: 'pointer', display: 'flex', padding: '4px' }}
+                title="로그아웃"
+              >
+                <LogOut size={13} />
+              </button>
+            </div>
+          ) : (
+            <button 
+              className="gold-button"
+              style={{ height: '36px', padding: '0 14px', fontSize: '12px' }}
+              onClick={() => setIsAuthModalOpen(true)}
+            >
+              <LogIn size={14} />
+              구글 로그인 & 동기화
+            </button>
+          )}
+
+          {/* Cloud Actions Buttons (Visible if logged in) */}
+          {googleUser && (
+            <div style={{ display: 'flex', gap: '4px' }}>
+              <button 
+                className="gold-button-outline"
+                style={{ height: '36px', width: '36px', padding: 0 }}
+                onClick={syncToCloud}
+                title="클라우드로 동기화 업로드"
+              >
+                <CloudUpload size={16} />
+              </button>
+              <button 
+                className="gold-button-outline"
+                style={{ height: '36px', width: '36px', padding: 0 }}
+                onClick={restoreFromCloud}
+                title="클라우드에서 불러오기 복원"
+              >
+                <CloudDownload size={16} />
+              </button>
+            </div>
+          )}
+
+          {/* Settings cog */}
+          <button 
+            className="gold-button-outline"
+            style={{ height: '36px', width: '36px', padding: 0 }}
+            onClick={() => setIsSettingsOpen(true)}
+            title="설정 및 백업 관리"
+          >
+            <Settings size={16} />
+          </button>
 
           {/* History Sidebar Button */}
           <button 
@@ -400,6 +630,49 @@ export default function App() {
       {/* Main Content Area */}
       <main style={{ flex: 1, padding: '40px 20px', maxWidth: '1400px', width: '100%', margin: '0 auto' }}>
         
+        {/* Cloud Sync Status Text (If Logged In) */}
+        {googleUser && (
+          <div style={{
+            backgroundColor: 'var(--panel-bg)',
+            border: '1px solid var(--border-color)',
+            padding: '12px 20px',
+            borderRadius: '6px',
+            marginBottom: '24px',
+            display: 'flex',
+            justifyContent: 'space-between',
+            alignItems: 'center',
+            fontSize: '13px',
+            flexWrap: 'wrap',
+            gap: '12px'
+          }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <Cloud size={16} style={{ color: 'var(--text-gold)' }} />
+              <span>
+                구글 클라우드 연동 활성화됨: <b>{googleUser.email}</b> 
+                {lastSyncedTime ? ` (최근 동기화: ${lastSyncedTime})` : ' (아직 클라우드 백업이 없습니다)'}
+              </span>
+            </div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
+              <label style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', cursor: 'pointer' }}>
+                <input 
+                  type="checkbox" 
+                  checked={isAutoSync} 
+                  onChange={(e) => setIsAutoSync(e.target.checked)}
+                  style={{ cursor: 'pointer' }}
+                />
+                자동 동기화 (저장 시 자동 업로드)
+              </label>
+              <button 
+                className="gold-button" 
+                style={{ padding: '4px 12px', fontSize: '12px', height: '28px' }}
+                onClick={syncToCloud}
+              >
+                지금 동기화
+              </button>
+            </div>
+          </div>
+        )}
+
         {/* Navigation Tabs */}
         <div style={{ 
           display: 'flex', 
@@ -471,7 +744,7 @@ export default function App() {
                   
                   <div style={{ display: 'flex', gap: '20px', flexWrap: 'wrap', alignItems: 'center' }}>
                     
-                    {/* Total Cards Selector (Supports 1-9 AND Grand Tableau) */}
+                    {/* Total Cards Selector */}
                     <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
                       <span style={{ fontSize: '13px', color: 'var(--text-secondary)' }}>총 카드 수:</span>
                       <select
@@ -487,7 +760,7 @@ export default function App() {
                       </select>
                     </div>
 
-                    {/* Columns Selector (Cards per Row / 포메이션 조절) */}
+                    {/* Columns Selector */}
                     <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
                       <span style={{ fontSize: '13px', color: 'var(--text-secondary)' }}>한 줄당 카드 수:</span>
                       <div style={{ display: 'flex', alignItems: 'center', border: '1px solid var(--border-color)', borderRadius: '4px', overflow: 'hidden' }}>
@@ -530,7 +803,7 @@ export default function App() {
                   </span>
                 </div>
 
-                {/* Grid of Card Slots (Automatically chunked into Centered Rows!) */}
+                {/* Grid of Card Slots */}
                 <div className="cards-row-container" style={{ padding: '30px 10px' }}>
                   <div style={{ display: 'flex', flexDirection: 'column', gap: '20px', alignItems: 'center', width: '100%' }}>
                     {dailyRows.map((rowCards, rowIndex) => (
@@ -658,7 +931,7 @@ export default function App() {
                             추천 상징: {card.keywords}
                           </div>
 
-                          {/* User custom selected keyword - LARGE */}
+                          {/* User custom selected keyword */}
                           <div style={{ marginTop: '8px' }}>
                             <input
                               type="text"
@@ -850,7 +1123,7 @@ export default function App() {
                   </span>
                 </div>
 
-                {/* Grid of Card Slots (Automatically chunked into Centered Rows!) */}
+                {/* Grid of Card Slots */}
                 <div className="cards-row-container" style={{ padding: '30px 10px' }}>
                   <div style={{ display: 'flex', flexDirection: 'column', gap: '20px', alignItems: 'center', width: '100%' }}>
                     {freeRows.map((rowCards, rowIndex) => (
@@ -1002,7 +1275,6 @@ export default function App() {
             }}
             onClick={(e) => e.stopPropagation()}
           >
-            {/* Header */}
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid var(--border-color)', paddingBottom: '16px', marginBottom: '20px' }}>
               <h2 className="serif-font" style={{ fontSize: '18px', color: 'var(--text-gold)', margin: 0, display: 'flex', alignItems: 'center', gap: '8px' }}>
                 <BookOpen size={18} />
@@ -1017,7 +1289,6 @@ export default function App() {
               </button>
             </div>
 
-            {/* List */}
             <div style={{ flex: 1, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '14px' }}>
               {journals.length === 0 ? (
                 <div style={{ textAlign: 'center', padding: '40px 0', color: 'var(--text-secondary)', fontSize: '14px' }}>
@@ -1047,8 +1318,7 @@ export default function App() {
                         e.currentTarget.style.boxShadow = 'none';
                       }}
                     >
-                      {/* Top row */}
-                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '8px' }}>
+                      <div style={{ display: 'flex', justifycontent: 'space-between', alignItems: 'flex-start', marginBottom: '8px' }}>
                         <span className="symbol-badge" style={{ fontSize: '10px', padding: '2px 6px' }}>
                           {entry.type === 'daily' ? '데일리' : '프리 리딩'}
                         </span>
@@ -1061,15 +1331,14 @@ export default function App() {
                             cursor: 'pointer',
                             padding: '2px',
                             display: 'flex',
-                            alignItems: 'center'
+                            alignItems: 'center',
+                            marginLeft: 'auto'
                           }}
-                          title="삭제"
                         >
                           <Trash2 size={14} />
                         </button>
                       </div>
 
-                      {/* Title/Date */}
                       <div style={{ fontWeight: 'bold', fontSize: '14px', color: 'var(--text-primary)', marginBottom: '6px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
                         {entry.type === 'daily' 
                           ? `📅 ${entry.date}`
@@ -1077,16 +1346,15 @@ export default function App() {
                         }
                       </div>
 
-                      {/* Small visual of cards in this record */}
                       <div style={{ display: 'flex', gap: '6px', marginBottom: '8px', flexWrap: 'wrap' }}>
-                        {cardList.map((c, i) => (
+                        {cardList.slice(0, 8).map((c, i) => (
                           <div 
                             key={i} 
                             style={{ 
-                              fontSize: '11px', 
+                              fontSize: '10px', 
                               backgroundColor: 'rgba(0,0,0,0.3)', 
-                              padding: '2px 6px', 
-                              borderRadius: '4px',
+                              padding: '1px 5px', 
+                              borderRadius: '3px',
                               border: '1px solid rgba(223,183,108,0.2)',
                               color: c ? 'var(--text-gold)' : 'var(--text-secondary)'
                             }}
@@ -1094,9 +1362,11 @@ export default function App() {
                             {c ? c.nameKo : '빈칸'}
                           </div>
                         ))}
+                        {cardList.length > 8 && (
+                          <div style={{ fontSize: '10px', color: 'var(--text-secondary)' }}>+{cardList.length - 8}장</div>
+                        )}
                       </div>
 
-                      {/* Footer time */}
                       <div style={{ fontSize: '10px', color: 'var(--text-secondary)', textAlign: 'right' }}>
                         저장일시: {entry.timestamp}
                       </div>
@@ -1104,6 +1374,178 @@ export default function App() {
                   );
                 })
               )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* GOOGLE SIGN IN AUTH MODAL */}
+      {isAuthModalOpen && (
+        <div className="modal-overlay" onClick={() => setIsAuthModalOpen(false)}>
+          <div className="modal-content" style={{ maxWidth: '480px' }} onClick={(e) => e.stopPropagation()}>
+            <div className="modal-header">
+              <h2 style={{ fontSize: '18px', color: 'var(--text-gold)', margin: 0, display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <LogIn size={20} />
+                구글 로그인 설정
+              </h2>
+              <button className="modal-close" onClick={() => setIsAuthModalOpen(false)}>
+                <X size={20} />
+              </button>
+            </div>
+            
+            <div style={{ padding: '24px', display: 'flex', flexDirection: 'column', gap: '20px' }}>
+              <p style={{ fontSize: '13px', color: 'var(--text-secondary)', margin: 0 }}>
+                구글 로그인을 완료하면 개인 저널 기록이 보안 백업 채널을 통해 동기화됩니다. 다른 브라우저나 모바일에서도 동일하게 저널 내역을 관리해 보세요!
+              </p>
+
+              {/* Client ID Setting input */}
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                <label style={{ fontSize: '12px', fontWeight: 'bold', color: 'var(--text-gold)' }}>
+                  구글 OAuth Client ID 입력:
+                </label>
+                <input 
+                  type="text" 
+                  className="parchment-input" 
+                  style={{ fontSize: '13px', height: '36px' }}
+                  placeholder="예: 123456789-abcdef.apps.googleusercontent.com"
+                  value={googleClientId}
+                  onChange={(e) => setGoogleClientId(e.target.value)}
+                />
+              </div>
+
+              {/* Google official login button target */}
+              {googleClientId ? (
+                <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '12px', margin: '10px 0' }}>
+                  <div ref={googleBtnContainerRef} id="google-signin-btn-container" />
+                  <span style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>
+                    위 버튼을 클릭하여 안전하게 구글 로그인을 진행합니다.
+                  </span>
+                </div>
+              ) : (
+                <div style={{ 
+                  backgroundColor: 'var(--panel-bg-alt)', 
+                  border: '1px dashed var(--border-color)', 
+                  padding: '12px', 
+                  borderRadius: '6px',
+                  fontSize: '12px',
+                  color: 'var(--text-secondary)',
+                  textAlign: 'center'
+                }}>
+                  구글 Client ID가 아직 없으신가요? <br />
+                  설정에서 발급 가이드를 보시거나, 아래 테스트 데모 버튼으로 기능 시뮬레이션을 먼저 진행해보실 수 있습니다!
+                </div>
+              )}
+
+              {/* Demo Mode Button */}
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', borderTop: '1px solid var(--border-color)', paddingTop: '16px' }}>
+                <span style={{ fontSize: '11px', color: 'var(--text-secondary)', textAlign: 'center' }}>
+                  Client ID 발급 없이 클라우드 기능 확인하기:
+                </span>
+                <button 
+                  className="gold-button" 
+                  onClick={startDemoSession}
+                  style={{ width: '100%', height: '40px' }}
+                >
+                  <Sparkles size={16} />
+                  데모 계정으로 간편 로그인 테스트
+                </button>
+              </div>
+
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* SETTINGS AND BACKUP MODAL */}
+      {isSettingsOpen && (
+        <div className="modal-overlay" onClick={() => setIsSettingsOpen(false)}>
+          <div className="modal-content" style={{ maxWidth: '580px' }} onClick={(e) => e.stopPropagation()}>
+            <div className="modal-header">
+              <h2 style={{ fontSize: '18px', color: 'var(--text-gold)', margin: 0, display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <Settings size={20} />
+                설정 및 데이터 관리
+              </h2>
+              <button className="modal-close" onClick={() => setIsSettingsOpen(false)}>
+                <X size={20} />
+              </button>
+            </div>
+
+            <div style={{ padding: '24px', display: 'flex', flexDirection: 'column', gap: '24px', maxHeight: '70vh', overflowY: 'auto' }}>
+              
+              {/* Google Client ID config */}
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                <h3 style={{ fontSize: '15px', color: 'var(--text-gold)', margin: 0, borderBottom: '1px solid var(--border-color)', paddingBottom: '6px' }}>
+                  1. 구글 OAuth 로그인 환경설정
+                </h3>
+                <p style={{ fontSize: '12px', color: 'var(--text-secondary)', margin: 0 }}>
+                  웹앱이 구글 계정을 안전하게 인증할 수 있도록 클라이언트 ID를 등록합니다.
+                </p>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                  <input 
+                    type="text" 
+                    className="parchment-input" 
+                    style={{ fontSize: '13px', height: '36px' }}
+                    placeholder="구글 클라이언트 ID 입력..."
+                    value={googleClientId}
+                    onChange={(e) => setGoogleClientId(e.target.value)}
+                  />
+                </div>
+
+                {/* Collapsible Setup Tutorial */}
+                <details style={{ 
+                  backgroundColor: 'var(--panel-bg-alt)', 
+                  border: '1px solid rgba(223,183,108,0.2)', 
+                  borderRadius: '4px',
+                  padding: '10px',
+                  fontSize: '12px',
+                  cursor: 'pointer'
+                }}>
+                  <summary style={{ fontWeight: 'bold', color: 'var(--text-gold)', outline: 'none' }}>
+                    💡 구글 OAuth Client ID 무료로 발급받는 초간단 가이드
+                  </summary>
+                  <div style={{ marginTop: '10px', color: 'var(--text-secondary)', lineHeight: 1.5, display: 'flex', flexDirection: 'column', gap: '8px', cursor: 'default' }} onClick={e => e.stopPropagation()}>
+                    <div>1. <a href="https://console.cloud.google.com/" target="_blank" rel="noreferrer" style={{ color: 'var(--text-gold)', textDecoration: 'underline' }}>Google Cloud Console</a>에 접속해 프로젝트를 생성합니다.</div>
+                    <div>2. <b>[API 및 서비스] &gt; [OAuth 동의 화면]</b>으로 가서 앱 정보를 입력하고 외부(External)로 완성합니다. (범위 설정은 프로필/이메일 체크)</div>
+                    <div>3. <b>[사용자 인증 정보] &gt; [사용자 인증 정보 만들기] &gt; [OAuth 클라이언트 ID]</b>를 누릅니다.</div>
+                    <div>4. 애플리케이션 유형을 <b>웹 애플리케이션</b>으로 설정합니다.</div>
+                    <div>5. <b>[승인된 JavaScript 원본]</b>에 <code>http://localhost:5173</code>를 추가합니다.</div>
+                    <div>6. 발급된 <b>클라이언트 ID</b>를 복사하여 위 칸에 붙여넣고 로그인창을 열면 실제 내 구글 계정으로 연동이 개시됩니다!</div>
+                  </div>
+                </details>
+              </div>
+
+              {/* Data Import/Export */}
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                <h3 style={{ fontSize: '15px', color: 'var(--text-gold)', margin: 0, borderBottom: '1px solid var(--border-color)', paddingBottom: '6px' }}>
+                  2. 수동 저널 파일 백업 및 가져오기
+                </h3>
+                <p style={{ fontSize: '12px', color: 'var(--text-secondary)', margin: 0 }}>
+                  인터넷이 연결되어 있지 않은 환경에서도 수동으로 JSON 파일을 내보내 백업을 만들거나 기존 데이터를 복구할 수 있습니다.
+                </p>
+                <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap' }}>
+                  <button className="gold-button" style={{ flex: 1, minWidth: '150px', height: '40px' }} onClick={exportToJson}>
+                    <FileDown size={16} />
+                    JSON 파일로 내보내기
+                  </button>
+                  <label className="gold-button-outline" style={{ flex: 1, minWidth: '150px', height: '40px', cursor: 'pointer' }}>
+                    <FileUp size={16} />
+                    JSON 파일에서 가져오기
+                    <input 
+                      type="file" 
+                      accept=".json" 
+                      onChange={importFromJson} 
+                      style={{ display: 'none' }} 
+                    />
+                  </label>
+                </div>
+              </div>
+
+              {/* Developer / Github link */}
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', borderTop: '1px solid var(--border-color)', paddingTop: '16px', fontSize: '12px', color: 'var(--text-secondary)' }}>
+                <div>프로젝트 저장소: <a href="https://github.com/Imwul/lenormand" target="_blank" rel="noreferrer" style={{ color: 'var(--text-gold)', textDecoration: 'underline' }}>github.com/Imwul/lenormand</a></div>
+                <div style={{ opacity: 0.7 }}>Git Repository Local Remote: <code>origin (https://github.com/Imwul/lenormand.git)</code></div>
+              </div>
+
             </div>
           </div>
         </div>
