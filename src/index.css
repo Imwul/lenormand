@@ -1,0 +1,412 @@
+@import url('https://fonts.googleapis.com/css2?family=Cinzel:wght@400;500;600;700;800;900&family=Playfair+Display:ital,wght@0,400;0,500;0,600;0,700;1,400;1,500&family=Inter:wght@300;400;500;600;700&display=swap');
+
+/* Default reset & basic styles */
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+:root {
+  /* Common standard colors */
+  --gold-metallic: linear-gradient(135deg, #f3d289 0%, #dfb76c 50%, #c59b4c 100%);
+  --gold-flat: #dfb76c;
+  --gold-glow: rgba(223, 183, 108, 0.4);
+  --transition-speed: 0.3s;
+}
+
+/* Theme 1: Blue Owl (Mystic Navy & Gold) */
+body.theme-blue-owl {
+  --bg-color: #060913;
+  --panel-bg: #0e1424;
+  --panel-bg-alt: #161e33;
+  --border-color: #dfb76c;
+  --text-primary: #f5f6f8;
+  --text-secondary: #a3aabf;
+  --text-gold: #f3d289;
+  --input-bg: #090d18;
+  --shadow-color: rgba(0, 0, 0, 0.6);
+  --accent-color: #1e3a8a;
+  --badge-bg: #1c2642;
+}
+
+/* Theme 2: Red Owl (Mystic Crimson & Gold) */
+body.theme-red-owl {
+  --bg-color: #120303;
+  --panel-bg: #1e0b0b;
+  --panel-bg-alt: #2a1212;
+  --border-color: #e5c185;
+  --text-primary: #fdf8f5;
+  --text-secondary: #cfa8a8;
+  --text-gold: #f5d496;
+  --input-bg: #150606;
+  --shadow-color: rgba(0, 0, 0, 0.7);
+  --accent-color: #7f1d1d;
+  --badge-bg: #351515;
+}
+
+/* Theme 3: Classic Cream (Vintage Paper & Sepia) */
+body.theme-classic-cream {
+  --bg-color: #f7f3e8;
+  --panel-bg: #fdfaf2;
+  --panel-bg-alt: #f1ebd8;
+  --border-color: #5c4033;
+  --text-primary: #2c1e18;
+  --text-secondary: #6e584f;
+  --text-gold: #8b5a2b;
+  --input-bg: #f7f3e8;
+  --shadow-color: rgba(92, 64, 51, 0.15);
+  --accent-color: #8b4513;
+  --badge-bg: #eae0ca;
+}
+
+body {
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  background-color: var(--bg-color);
+  color: var(--text-primary);
+  transition: background-color var(--transition-speed), color var(--transition-speed);
+  line-height: 1.6;
+  min-height: 100vh;
+}
+
+/* Scrollbar Styling */
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-track {
+  background: var(--bg-color);
+}
+::-webkit-scrollbar-thumb {
+  background: var(--panel-bg-alt);
+  border: 2px solid var(--bg-color);
+  border-radius: 5px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--border-color);
+}
+
+/* Typography styles */
+h1, h2, h3, h4, .serif-font {
+  font-family: 'Cinzel', serif;
+  letter-spacing: 0.05em;
+}
+
+p, span, input, textarea, select, button {
+  font-family: 'Inter', sans-serif;
+}
+
+.title-ornament {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 15px;
+  margin-bottom: 5px;
+}
+
+.title-ornament::before, .title-ornament::after {
+  content: "";
+  display: block;
+  height: 2px;
+  width: 60px;
+  background: var(--gold-metallic);
+}
+
+/* Double bordered container helper */
+.double-border {
+  border: 1px solid var(--border-color);
+  padding: 4px;
+  border-radius: 4px;
+}
+
+.double-border-inner {
+  border: 2px solid var(--border-color);
+  padding: 24px;
+  background-color: var(--panel-bg);
+  border-radius: 2px;
+  box-shadow: 0 10px 30px var(--shadow-color);
+}
+
+/* Classic vintage panels */
+.vintage-panel {
+  background-color: var(--panel-bg);
+  border: 1px solid var(--border-color);
+  box-shadow: 0 4px 20px var(--shadow-color);
+  border-radius: 4px;
+  padding: 20px;
+  transition: background-color var(--transition-speed), border-color var(--transition-speed);
+}
+
+/* Antique Parchment Style for Inputs */
+.parchment-input {
+  width: 100%;
+  background-color: var(--input-bg);
+  color: var(--text-primary);
+  border: 1px solid var(--border-color);
+  border-radius: 4px;
+  padding: 12px 16px;
+  font-size: 15px;
+  line-height: 1.6;
+  outline: none;
+  transition: box-shadow var(--transition-speed), border-color var(--transition-speed);
+}
+
+.parchment-input:focus {
+  border-color: var(--text-gold);
+  box-shadow: 0 0 10px var(--gold-glow);
+}
+
+textarea.parchment-input {
+  resize: vertical;
+  min-height: 110px;
+  font-family: 'Playfair Display', serif;
+  font-size: 16px;
+}
+
+/* Cards Layout Container */
+.cards-row-container {
+  background-color: var(--panel-bg-alt);
+  border: 1px dashed var(--border-color);
+  border-radius: 8px;
+  padding: 30px 15px;
+  margin-bottom: 30px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  position: relative;
+  overflow: hidden;
+}
+
+.cards-grid {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 20px;
+  width: 100%;
+  max-width: 1200px;
+}
+
+/* Card aspect ratio slot (56mm x 87mm is roughly 1 : 1.55) */
+.card-slot-outer {
+  width: 175px;
+  height: 272px;
+  perspective: 1000px;
+  cursor: pointer;
+}
+
+.card-slot-inner {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  text-align: center;
+  transition: transform 0.6s cubic-bezier(0.4, 0, 0.2, 1);
+  transform-style: preserve-3d;
+  box-shadow: 0 6px 16px var(--shadow-color);
+  border-radius: 6px;
+}
+
+.card-slot-outer:hover .card-slot-inner {
+  transform: translateY(-8px);
+  box-shadow: 0 12px 24px var(--shadow-color), 0 0 15px var(--gold-glow);
+}
+
+.card-face {
+  position: absolute;
+  width: 100%;
+  height: 100%;
+  backface-visibility: hidden;
+  border-radius: 6px;
+  border: 1px solid var(--border-color);
+  overflow: hidden;
+}
+
+.card-front {
+  background-color: #0b0f19;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.card-front img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.card-back-placeholder {
+  width: 100%;
+  height: 100%;
+  background-color: var(--panel-bg);
+  border: 2px solid var(--border-color);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 12px;
+  color: var(--text-secondary);
+  gap: 15px;
+  position: relative;
+}
+
+.card-back-placeholder::before {
+  content: "";
+  position: absolute;
+  top: 6px;
+  left: 6px;
+  right: 6px;
+  bottom: 6px;
+  border: 1px dashed var(--border-color);
+  pointer-events: none;
+  opacity: 0.6;
+}
+
+.card-owl-icon {
+  width: 48px;
+  height: 48px;
+  opacity: 0.65;
+  stroke: var(--border-color);
+  stroke-width: 1.2px;
+  fill: none;
+  transition: transform var(--transition-speed);
+}
+
+.card-slot-outer:hover .card-owl-icon {
+  transform: scale(1.1) rotate(5deg);
+  opacity: 0.9;
+}
+
+/* Buttons */
+.gold-button {
+  background: var(--gold-metallic);
+  color: #1a1508;
+  border: none;
+  border-radius: 4px;
+  padding: 10px 20px;
+  font-weight: 700;
+  font-size: 14px;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  cursor: pointer;
+  box-shadow: 0 4px 10px rgba(0,0,0,0.3);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  transition: transform 0.2s, box-shadow 0.2s, filter 0.2s;
+}
+
+.gold-button:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 6px 14px var(--gold-glow);
+  filter: brightness(1.05);
+}
+
+.gold-button:active {
+  transform: translateY(1px);
+}
+
+.gold-button-outline {
+  background: transparent;
+  color: var(--text-gold);
+  border: 1px solid var(--border-color);
+  border-radius: 4px;
+  padding: 9px 18px;
+  font-weight: 600;
+  font-size: 14px;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  transition: background-color var(--transition-speed), color var(--transition-speed), box-shadow var(--transition-speed);
+}
+
+.gold-button-outline:hover {
+  background-color: var(--border-color);
+  color: #1a1508;
+  box-shadow: 0 0 10px var(--gold-glow);
+}
+
+/* Modal Styling */
+.modal-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background-color: rgba(0, 0, 0, 0.85);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+  backdrop-filter: blur(4px);
+  padding: 20px;
+}
+
+.modal-content {
+  background-color: var(--panel-bg);
+  border: 1px solid var(--border-color);
+  max-width: 900px;
+  width: 100%;
+  max-height: 85vh;
+  overflow-y: auto;
+  border-radius: 8px;
+  position: relative;
+  box-shadow: 0 20px 50px rgba(0, 0, 0, 0.9);
+}
+
+.modal-header {
+  border-bottom: 1px solid var(--border-color);
+  padding: 20px 24px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  position: sticky;
+  top: 0;
+  background-color: var(--panel-bg);
+  z-index: 10;
+}
+
+.modal-close {
+  background: transparent;
+  border: none;
+  color: var(--text-secondary);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: color var(--transition-speed);
+}
+
+.modal-close:hover {
+  color: var(--text-gold);
+}
+
+/* Symbol Badge */
+.symbol-badge {
+  background-color: var(--badge-bg);
+  border: 1px solid var(--border-color);
+  color: var(--text-gold);
+  border-radius: 4px;
+  padding: 6px 12px;
+  font-weight: 600;
+  font-size: 13px;
+  display: inline-block;
+  letter-spacing: 0.03em;
+}
+
+/* Responsive elements */
+@media (max-width: 768px) {
+  .double-border-inner {
+    padding: 16px;
+  }
+  .card-slot-outer {
+    width: 145px;
+    height: 225px;
+  }
+  .cards-row-container {
+    padding: 20px 10px;
+  }
+}
