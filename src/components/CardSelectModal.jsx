@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import { useState, useMemo } from 'react';
 import { LENORMAND_CARDS } from '../constants';
 import { Search, X, RefreshCw } from 'lucide-react';
 

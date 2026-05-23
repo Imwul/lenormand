@@ -1,5 +1,5 @@
-import React, { useState, useEffect, useRef } from 'react';
-import { LENORMAND_CARDS, THEMES } from './constants';
+import { useState, useEffect, useRef, useCallback } from 'react';
+import { LENORMAND_CARDS } from './constants';
 import CardSlot from './components/CardSlot';
 import CardSelectModal from './components/CardSelectModal';
 import { 
@@ -14,7 +14,6 @@ import {
   Plus, 
   Minus, 
   Save, 
-  ChevronRight, 
   BookMarked,
   Info,
   Layers,
@@ -22,8 +21,6 @@ import {
   Grid,
   LogIn,
   LogOut,
-  CloudLightning,
-  CloudRain,
   CloudUpload,
   CloudDownload,
   Cloud,
@@ -89,71 +86,88 @@ export default function App() {
 
   const googleBtnContainerRef = useRef(null);
 
-  // Apply Theme class to body
-  useEffect(() => {
-    const body = document.body;
-    body.className = '';
-    body.classList.add(`theme-${theme}`);
-    localStorage.setItem('lenormand_theme', theme);
-  }, [theme]);
+  // ==========================================
+  // Core Functions & Handlers (Fully Defined)
+  // ==========================================
 
-  // Sync journals to LocalStorage
-  useEffect(() => {
-    localStorage.setItem('lenormand_journals', JSON.stringify(journals));
-    // Trigger Auto-Sync if active and logged in
-    if (isAutoSync && googleUser) {
-      autoSyncToCloud(journals);
+  // Helper to chunk cards array into rows
+  const chunkCards = (arr, size) => {
+    const chunks = [];
+    for (let i = 0; i < arr.length; i += size) {
+      chunks.push(arr.slice(i, i + size));
     }
-  }, [journals]);
+    return chunks;
+  };
 
-  // Save googleClientId to LocalStorage
-  useEffect(() => {
-    localStorage.setItem('google_client_id', googleClientId);
-  }, [googleClientId]);
+  // Time Puncher
+  const punchTime = () => {
+    const now = new Date();
+    const yyyy = now.getFullYear();
+    const mm = String(now.getMonth() + 1).padStart(2, '0');
+    const dd = String(now.getDate()).padStart(2, '0');
+    const hh = String(now.getHours()).padStart(2, '0');
+    const min = String(now.getMinutes()).padStart(2, '0');
+    setDailyDate(`${yyyy}-${mm}-${dd} ${hh}:${min}`);
+  };
 
-  // Save googleUser to LocalStorage
-  useEffect(() => {
-    if (googleUser) {
-      localStorage.setItem('google_user', JSON.stringify(googleUser));
-    } else {
-      localStorage.removeItem('google_user');
-    }
-  }, [googleUser]);
+  // Open Modal for slot selection
+  const openCardSelectModal = (index) => {
+    setActiveSlotIndex(index);
+    setIsModalOpen(true);
+  };
 
-  // Save isAutoSync to LocalStorage
-  useEffect(() => {
-    localStorage.setItem('is_auto_sync', isAutoSync);
-  }, [isAutoSync]);
-
-  // Initialize Google Identity Services (GIS)
-  useEffect(() => {
-    if (isAuthModalOpen && window.google && googleClientId) {
-      try {
-        /* global google */
-        google.accounts.id.initialize({
-          client_id: googleClientId,
-          callback: handleGoogleCredentialResponse
+  // Handle Card Selection
+  const handleSelectCard = (card) => {
+    if (activeTab === 'daily') {
+      setDailyCards(prev => {
+        const copy = [...prev];
+        copy[activeSlotIndex] = card;
+        return copy;
+      });
+      if (!card) {
+        setDailyMemos(prev => {
+          const copy = { ...prev };
+          delete copy[activeSlotIndex];
+          return copy;
         });
-        
-        // Wait a small tick to ensure DOM ref is bound
-        setTimeout(() => {
-          if (googleBtnContainerRef.current) {
-            google.accounts.id.renderButton(
-              googleBtnContainerRef.current,
-              { theme: "filled_blue", size: "large", width: "300" }
-            );
-          }
-        }, 100);
-      } catch (err) {
-        console.error("Google Auth Init error: ", err);
       }
+    } else {
+      setFreeCards(prev => {
+        const copy = [...prev];
+        copy[activeSlotIndex] = card;
+        return copy;
+      });
     }
-  }, [isAuthModalOpen, googleClientId]);
+  };
 
-  // Handle GIS OAuth Callback
+  // Update Daily Memos
+  const updateDailyMemo = (index, value) => {
+    setDailyMemos(prev => ({
+      ...prev,
+      [index]: value
+    }));
+  };
+
+  // Clear workspace
+  const clearWorkspace = () => {
+    if (!window.confirm('현재 작업 영역을 초기화하시겠습니까?')) return;
+    if (activeTab === 'daily') {
+      setDailyCards(Array(dailyCardCount).fill(null));
+      setDailyDate('');
+      setDailyMemos({});
+      setDailyMorningNote('');
+      setDailyEveningNote('');
+    } else {
+      setFreeQuestion('');
+      setFreeCards(Array(freeCardCount).fill(null));
+      setFreePrediction('');
+      setFreeFeedback('');
+    }
+  };
+
+  // Google OAuth GIS callback response handler (JWT decode)
   const handleGoogleCredentialResponse = (response) => {
     try {
-      // Decode JWT token to get user info
       const base64Url = response.credential.split('.')[1];
       const base64 = base64Url.replace(/-/g, '+').replace(/_/g, '/');
       const jsonPayload = decodeURIComponent(atob(base64).split('').map(function(c) {
@@ -201,7 +215,7 @@ export default function App() {
     alert("로그아웃 되었습니다.");
   };
 
-  // Actual / Mock Cloud Synchronization Upload
+  // Cloud Synchronization Upload
   const syncToCloud = () => {
     if (!googleUser) {
       alert("먼저 로그인이 필요합니다.");
@@ -210,9 +224,7 @@ export default function App() {
 
     setIsCloudSyncing(true);
     
-    // Simulate cloud database upload latency
     setTimeout(() => {
-      // Store in a separate storage key representing "the cloud database"
       localStorage.setItem('lenormand_journals_cloud', JSON.stringify(journals));
       
       const nowStr = new Date().toLocaleString();
@@ -225,15 +237,16 @@ export default function App() {
   };
 
   // Auto-Sync Trigger
-  const autoSyncToCloud = (dataToSync) => {
-    // Only upload silently in background
+  const autoSyncToCloud = useCallback((dataToSync) => {
     localStorage.setItem('lenormand_journals_cloud', JSON.stringify(dataToSync));
     const nowStr = new Date().toLocaleString();
-    setLastSyncedTime(nowStr);
+    setTimeout(() => {
+      setLastSyncedTime(nowStr);
+    }, 0);
     localStorage.setItem('last_synced_time', nowStr);
-  };
+  }, []);
 
-  // Actual / Mock Cloud Synchronization Download
+  // Cloud Synchronization Download
   const restoreFromCloud = () => {
     if (!googleUser) {
       alert("먼저 로그인이 필요합니다.");
@@ -252,7 +265,6 @@ export default function App() {
 
     setIsCloudSyncing(true);
 
-    // Simulate download latency
     setTimeout(() => {
       const parsed = JSON.parse(savedCloud);
       setJournals(parsed);
@@ -288,19 +300,149 @@ export default function App() {
           alert("올바른 레노먼드 저널 JSON 파일이 아닙니다.");
         }
       } catch (err) {
+        console.error("Import error: ", err);
         alert("파일을 파싱하는 도중 에러가 발생했습니다.");
       }
     };
   };
 
-  // Helper to chunk cards array into rows
-  const chunkCards = (arr, size) => {
-    const chunks = [];
-    for (let i = 0; i < arr.length; i += size) {
-      chunks.push(arr.slice(i, i + size));
+  // Save current session to history journal
+  const saveJournal = () => {
+    const id = Date.now().toString();
+    const timestamp = new Date().toLocaleString();
+    let newEntry = { id, timestamp, type: activeTab };
+
+    if (activeTab === 'daily') {
+      const hasCards = dailyCards.some(c => c !== null);
+      if (!hasCards && !dailyMorningNote && !dailyEveningNote) {
+        alert('저장할 내용(카드 혹은 메모)이 없습니다.');
+        return;
+      }
+      newEntry = {
+        ...newEntry,
+        date: dailyDate || new Date().toLocaleDateString(),
+        cardCount: dailyCardCount,
+        cols: dailyCols,
+        cards: dailyCards.map(c => c ? c.id : null),
+        memos: { ...dailyMemos },
+        morningNote: dailyMorningNote,
+        eveningNote: dailyEveningNote
+      };
+    } else {
+      const hasCards = freeCards.some(c => c !== null);
+      if (!freeQuestion && !hasCards && !freePrediction && !freeFeedback) {
+        alert('저장할 내용이 없습니다.');
+        return;
+      }
+      newEntry = {
+        ...newEntry,
+        question: freeQuestion || '무제 질문',
+        cardCount: freeCardCount,
+        cols: freeCols,
+        cards: freeCards.map(c => c ? c.id : null),
+        prediction: freePrediction,
+        feedback: freeFeedback
+      };
     }
-    return chunks;
+
+    setJournals(prev => [newEntry, ...prev]);
+    alert('성공적으로 저장되었습니다.');
   };
+
+  // Load past reading
+  const loadJournal = (entry) => {
+    if (!window.confirm('작성 중인 내용이 덮어씌워집니다. 불러오시겠습니까?')) return;
+    
+    setActiveTab(entry.type);
+
+    if (entry.type === 'daily') {
+      setDailyCardCount(entry.cardCount);
+      setDailyCols(entry.cols || entry.cardCount);
+      setDailyDate(entry.date || '');
+      setDailyCards(entry.cards.map(id => id ? LENORMAND_CARDS.find(c => c.id === id) : null));
+      setDailyMemos(entry.memos || {});
+      setDailyMorningNote(entry.morningNote || '');
+      setDailyEveningNote(entry.eveningNote || '');
+    } else {
+      setFreeQuestion(entry.question || '');
+      setFreeCardCount(entry.cardCount);
+      setFreeCols(entry.cols || entry.cardCount);
+      setFreeCards(entry.cards.map(id => id ? LENORMAND_CARDS.find(c => c.id === id) : null));
+      setFreePrediction(entry.prediction || '');
+      setFreeFeedback(entry.feedback || '');
+    }
+    setIsSidebarOpen(false);
+  };
+
+  // Delete past reading
+  const deleteJournal = (id, e) => {
+    e.stopPropagation();
+    if (!window.confirm('정말 이 기록을 삭제하시겠습니까?')) return;
+    setJournals(prev => prev.filter(j => j.id !== id));
+  };
+
+  // ==========================================
+  // React Hooks / Effects
+  // ==========================================
+
+  // Apply Theme class to body
+  useEffect(() => {
+    const body = document.body;
+    body.className = '';
+    body.classList.add(`theme-${theme}`);
+    localStorage.setItem('lenormand_theme', theme);
+  }, [theme]);
+
+  // Sync journals to LocalStorage
+  useEffect(() => {
+    localStorage.setItem('lenormand_journals', JSON.stringify(journals));
+    // Trigger Auto-Sync if active and logged in
+    if (isAutoSync && googleUser) {
+      autoSyncToCloud(journals);
+    }
+  }, [journals, isAutoSync, googleUser, autoSyncToCloud]);
+
+  // Save googleClientId to LocalStorage
+  useEffect(() => {
+    localStorage.setItem('google_client_id', googleClientId);
+  }, [googleClientId]);
+
+  // Save googleUser to LocalStorage
+  useEffect(() => {
+    if (googleUser) {
+      localStorage.setItem('google_user', JSON.stringify(googleUser));
+    } else {
+      localStorage.removeItem('google_user');
+    }
+  }, [googleUser]);
+
+  // Save isAutoSync to LocalStorage
+  useEffect(() => {
+    localStorage.setItem('is_auto_sync', isAutoSync);
+  }, [isAutoSync]);
+
+  // Initialize Google Identity Services (GIS)
+  useEffect(() => {
+    if (isAuthModalOpen && window.google && googleClientId) {
+      try {
+        window.google.accounts.id.initialize({
+          client_id: googleClientId,
+          callback: handleGoogleCredentialResponse
+        });
+        
+        setTimeout(() => {
+          if (googleBtnContainerRef.current) {
+            window.google.accounts.id.renderButton(
+              googleBtnContainerRef.current,
+              { theme: "filled_blue", size: "large", width: "300" }
+            );
+          }
+        }, 100);
+      } catch (err) {
+        console.error("Google Auth Init error: ", err);
+      }
+    }
+  }, [isAuthModalOpen, googleClientId]);
 
   // Adjust daily card count
   const handleDailyCardCountChange = (count) => {
@@ -342,80 +484,14 @@ export default function App() {
     });
   };
 
-  // Open Modal for slot
-  const openCardSelectModal = (index) => {
-    setActiveSlotIndex(index);
-    setIsModalOpen(true);
-  };
-
-  // Handle Card Selection
-  const handleSelectCard = (card) => {
-    if (activeTab === 'daily') {
-      setDailyCards(prev => {
-        const copy = [...prev];
-        copy[activeSlotIndex] = card;
-        return copy;
-      });
-      if (!card) {
-        setDailyMemos(prev => {
-          const copy = { ...prev };
-          delete copy[activeSlotIndex];
-          return copy;
-        });
-      }
-    } else {
-      setFreeCards(prev => {
-        const copy = [...prev];
-        copy[activeSlotIndex] = card;
-        return copy;
-      });
-    }
-  };
-
-  // Update Memo
-  const updateDailyMemo = (index, value) => {
-    setDailyMemos(prev => ({
-      ...prev,
-      [index]: value
-    }));
-  };
-
-  // Time Puncher
-  const punchTime = () => {
-    const now = new Date();
-    const yyyy = now.getFullYear();
-    const mm = String(now.getMonth() + 1).padStart(2, '0');
-    const dd = String(now.getDate()).padStart(2, '0');
-    const hh = String(now.getHours()).padStart(2, '0');
-    const min = String(now.getMinutes()).padStart(2, '0');
-    setDailyDate(`${yyyy}-${mm}-${dd} ${hh}:${min}`);
-  };
-
-  // Clear workspace
-  const clearWorkspace = () => {
-    if (!window.confirm('현재 작업 영역을 초기화하시겠습니까?')) return;
-    if (activeTab === 'daily') {
-      setDailyCards(Array(dailyCardCount).fill(null));
-      setDailyDate('');
-      setDailyMemos({});
-      setDailyMorningNote('');
-      setDailyEveningNote('');
-    } else {
-      setFreeQuestion('');
-      setFreeCards(Array(freeCardCount).fill(null));
-      setFreePrediction('');
-      setFreeFeedback('');
-    }
-  };
-
-  // Get active modal properties
-  const activeCardId = activeSlotIndex !== null 
-    ? (activeTab === 'daily' ? dailyCards[activeSlotIndex]?.id : freeCards[activeSlotIndex]?.id) 
-    : null;
-
   // Chunked Daily and Free cards
   const dailyRows = chunkCards(dailyCards, dailyCols);
   const freeRows = chunkCards(freeCards, freeCols);
+
+  const currentCard = activeSlotIndex !== null
+    ? (activeTab === 'daily' ? dailyCards[activeSlotIndex] : freeCards[activeSlotIndex])
+    : null;
+  const activeCardId = currentCard ? currentCard.id : null;
 
   return (
     <div style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column', position: 'relative' }}>
@@ -442,7 +518,7 @@ export default function App() {
               100% { transform: rotate(360deg); }
             }
           `}</style>
-          <span className="serif-font" style={{ fontSize: '18px', color: 'var(--text-gold)', letterSpacing: '0.05em' }}>
+          <span className="serif-font" style={{ fontSize: '18px', color: 'var(--text-gold)' }}>
             구글 클라우드 동기화 중...
           </span>
           <span style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>
@@ -574,7 +650,7 @@ export default function App() {
             </button>
           )}
 
-          {/* Cloud Actions Buttons (Visible if logged in) */}
+          {/* Cloud Actions Buttons */}
           {googleUser && (
             <div style={{ display: 'flex', gap: '4px' }}>
               <button 
@@ -630,7 +706,7 @@ export default function App() {
       {/* Main Content Area */}
       <main style={{ flex: 1, padding: '40px 20px', maxWidth: '1400px', width: '100%', margin: '0 auto' }}>
         
-        {/* Cloud Sync Status Text (If Logged In) */}
+        {/* Cloud Sync Status Text */}
         {googleUser && (
           <div style={{
             backgroundColor: 'var(--panel-bg)',
@@ -689,11 +765,9 @@ export default function App() {
               color: activeTab === 'daily' ? 'var(--text-gold)' : 'var(--text-secondary)',
               padding: '12px 24px',
               fontSize: '18px',
-              fontFamily: 'Cinzel, serif',
               fontWeight: 700,
               cursor: 'pointer',
-              transition: 'all 0.2s',
-              letterSpacing: '0.05em'
+              transition: 'all 0.2s'
             }}
           >
             데일리 레노먼드 리딩
@@ -707,11 +781,9 @@ export default function App() {
               color: activeTab === 'free' ? 'var(--text-gold)' : 'var(--text-secondary)',
               padding: '12px 24px',
               fontSize: '18px',
-              fontFamily: 'Cinzel, serif',
               fontWeight: 700,
               cursor: 'pointer',
-              transition: 'all 0.2s',
-              letterSpacing: '0.05em'
+              transition: 'all 0.2s'
             }}
           >
             프리 리딩
@@ -1017,7 +1089,7 @@ export default function App() {
             
             {/* Main Question Input Box */}
             <div className="vintage-panel" style={{ textAlign: 'center', padding: '30px 24px' }}>
-              <span className="serif-font" style={{ fontSize: '13px', color: 'var(--text-gold)', letterSpacing: '0.1em', display: 'block', marginBottom: '8px' }}>
+              <span className="serif-font" style={{ fontSize: '13px', color: 'var(--text-gold)', display: 'block', marginBottom: '8px' }}>
                 THE INQUIRY
               </span>
               <input
@@ -1475,7 +1547,7 @@ export default function App() {
               {/* Google Client ID config */}
               <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
                 <h3 style={{ fontSize: '15px', color: 'var(--text-gold)', margin: 0, borderBottom: '1px solid var(--border-color)', paddingBottom: '6px' }}>
-                  1. 구글 OAuth 로그인 환경설정
+                  1. 구글 OAuth Login 설정
                 </h3>
                 <p style={{ fontSize: '12px', color: 'var(--text-secondary)', margin: 0 }}>
                   웹앱이 구글 계정을 안전하게 인증할 수 있도록 클라이언트 ID를 등록합니다.

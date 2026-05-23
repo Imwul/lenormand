@@ -1,4 +1,3 @@
-import React from 'react';
 import { Sparkles, Trash2, Edit2 } from 'lucide-react';
 
 export default function CardSlot({ card, index, onSelect }) {
@@ -193,7 +192,7 @@ export default function CardSlot({ card, index, onSelect }) {
             </svg>
 
             <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', alignItems: 'center' }}>
-              <span className="serif-font" style={{ fontSize: '13px', color: 'var(--text-gold)', fontWeight: 600, letterSpacing: '0.05em' }}>
+              <span className="serif-font" style={{ fontSize: '13px', color: 'var(--text-gold)', fontWeight: 600 }}>
                 슬롯 {index + 1}
               </span>
               <span style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>
