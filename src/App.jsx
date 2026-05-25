@@ -1,5 +1,8 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { LENORMAND_CARDS, getLenormandCombo } from './constants';
+import { auth, db, googleProvider } from './firebase';
+import { signInWithPopup, signOut, onAuthStateChanged } from 'firebase/auth';
+import { doc, getDoc, onSnapshot, setDoc } from 'firebase/firestore';
 import CardSlot from './components/CardSlot';
 import CardSelectModal from './components/CardSelectModal';
 import { 
@@ -71,13 +74,9 @@ export default function App() {
 
   // Settings & Cloud Sync State
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
-  const [googleClientId, setGoogleClientId] = useState(() => {
-    return localStorage.getItem('google_client_id') || '';
-  });
-  const [googleUser, setGoogleUser] = useState(() => {
-    const saved = localStorage.getItem('google_user');
-    return saved ? JSON.parse(saved) : null;
-  });
+  const [googleUser, setGoogleUser] = useState(null);
+  const [syncStatus, setSyncStatus] = useState("idle"); // 'idle' | 'syncing' | 'synced' | 'error'
+  const [syncMessage, setSyncMessage] = useState("");
   const [isCloudSyncing, setIsCloudSyncing] = useState(false);
   const [lastSyncedTime, setLastSyncedTime] = useState(() => {
     return localStorage.getItem('last_synced_time') || null;
@@ -85,8 +84,6 @@ export default function App() {
   const [isAutoSync, setIsAutoSync] = useState(() => {
     return localStorage.getItem('is_auto_sync') === 'true';
   });
-
-  const googleBtnHeaderRef = useRef(null);
 
   // Convenience features states
   const [isShufflingDaily, setIsShufflingDaily] = useState(false);
@@ -185,36 +182,51 @@ export default function App() {
     }
   };
 
-  // Google OAuth GIS callback response handler (JWT decode)
-  const handleGoogleCredentialResponse = (response) => {
-    try {
-      const base64Url = response.credential.split('.')[1];
-      const base64 = base64Url.replace(/-/g, '+').replace(/_/g, '/');
-      const jsonPayload = decodeURIComponent(atob(base64).split('').map(function(c) {
-        return '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2);
-      }).join(''));
+  // Firebase Auth Listener
+  useEffect(() => {
+    if (!auth) return;
+    const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
+      if (currentUser) {
+        setGoogleUser({
+          uid: currentUser.uid,
+          name: currentUser.displayName,
+          email: currentUser.email,
+          picture: currentUser.photoURL,
+          isLoggedIn: true,
+          isDemo: false
+        });
+      } else {
+        const saved = localStorage.getItem('google_user');
+        if (saved) {
+          const parsed = JSON.parse(saved);
+          if (parsed.isDemo) {
+            setGoogleUser(parsed);
+          } else {
+            setGoogleUser(null);
+          }
+        } else {
+          setGoogleUser(null);
+        }
+      }
+    });
+    return () => unsubscribe();
+  }, []);
 
-      const payload = JSON.parse(jsonPayload);
-      
-      const loggedUser = {
-        name: payload.name,
-        email: payload.email,
-        picture: payload.picture,
-        isLoggedIn: true,
-        isDemo: false
-      };
-      
-      setGoogleUser(loggedUser);
-      alert(`${loggedUser.name}님, 구글 로그인이 완료되었습니다!`);
+  const handleGoogleLogin = async () => {
+    try {
+      if (auth && googleProvider) {
+        await signInWithPopup(auth, googleProvider);
+      }
     } catch (error) {
-      console.error("JWT Decode error:", error);
-      alert("로그인 처리 중 에러가 발생했습니다.");
+      console.error("Login failed:", error);
+      alert("로그인 실패: " + (error.message || "알 수 없는 오류"));
     }
   };
 
   // Start Demo Mode Session
   const startDemoSession = () => {
     const demoUser = {
+      uid: "demo-user-id",
       name: "Imwul (데모 계정)",
       email: "imwul@github.com",
       picture: "https://api.dicebear.com/7.x/lorelei/svg?seed=imwul",
@@ -222,58 +234,88 @@ export default function App() {
       isDemo: true
     };
     setGoogleUser(demoUser);
+    localStorage.setItem('google_user', JSON.stringify(demoUser));
     alert("데모 모드로 로그인되었습니다! 클라우드 동기화 시뮬레이션을 진행할 수 있습니다.");
   };
 
   // Google Log Out
-  const handleLogOut = () => {
+  const handleLogOut = async () => {
     if (!window.confirm("구글 계정에서 로그아웃하시겠습니까?")) return;
-    setGoogleUser(null);
-    localStorage.removeItem('google_user');
-    alert("로그아웃 되었습니다.");
+    try {
+      if (googleUser && googleUser.isDemo) {
+        setGoogleUser(null);
+        localStorage.removeItem('google_user');
+        alert("로그아웃 되었습니다.");
+      } else {
+        if (auth) {
+          await signOut(auth);
+          localStorage.removeItem('google_user');
+          alert("로그아웃 되었습니다.");
+        }
+      }
+    } catch (error) {
+      console.error("Logout failed:", error);
+    }
   };
 
   // Cloud Synchronization Upload
-  const syncToCloud = () => {
+  const syncToCloud = async () => {
     if (!googleUser) {
       alert("먼저 로그인이 필요합니다.");
       return;
     }
-
-    setIsCloudSyncing(true);
     
-    setTimeout(() => {
-      localStorage.setItem('lenormand_journals_cloud', JSON.stringify(journals));
-      
-      const nowStr = new Date().toLocaleString();
+    setIsCloudSyncing(true);
+    setSyncStatus("syncing");
+    setSyncMessage("업로드 중...");
+
+    try {
+      if (googleUser.isDemo) {
+        setTimeout(() => {
+          localStorage.setItem('lenormand_journals_cloud', JSON.stringify(journals));
+          const nowStr = new Date().toLocaleString();
+          setLastSyncedTime(nowStr);
+          localStorage.setItem('last_synced_time', nowStr);
+          setIsCloudSyncing(false);
+          setSyncStatus("synced");
+          setSyncMessage("동기화 완료(데모)");
+          alert("🎉 [데모 모드] 클라우드 동기화 완료! 현재 모든 로컬 저널 데이터가 시뮬레이션용 스토리지에 성공적으로 백업되었습니다.");
+        }, 800);
+        return;
+      }
+
+      if (!db) throw new Error("Firebase가 초기화되지 않았습니다.");
+      const docRef = doc(db, 'saves', googleUser.uid);
+      const gsStr = JSON.stringify(journals);
+      const now = new Date().toISOString();
+
+      await setDoc(docRef, {
+        lenormand_journals: gsStr,
+        lenormand_updatedAt: now
+      }, { merge: true });
+
+      localStorage.setItem('lenormand_updated_at', now);
+      const nowStr = new Date(now).toLocaleString();
       setLastSyncedTime(nowStr);
       localStorage.setItem('last_synced_time', nowStr);
       
       setIsCloudSyncing(false);
-      alert("🎉 클라우드 동기화 완료! 현재 모든 로컬 저널 데이터가 구글 클라우드에 성공적으로 백업되었습니다.");
-    }, 1500);
+      setSyncStatus("synced");
+      setSyncMessage("동기화 완료");
+      alert("🎉 클라우드 동기화 완료! 현재 모든 로컬 저널 데이터가 구글 파이어베이스 클라우드에 안전하게 보관되었습니다.");
+    } catch (err) {
+      console.error("Firebase upload failed:", err);
+      setIsCloudSyncing(false);
+      setSyncStatus("error");
+      setSyncMessage("동기화 실패");
+      alert("❌ 동기화 중 오류가 발생했습니다: " + (err.message || err));
+    }
   };
 
-  // Auto-Sync Trigger
-  const autoSyncToCloud = useCallback((dataToSync) => {
-    localStorage.setItem('lenormand_journals_cloud', JSON.stringify(dataToSync));
-    const nowStr = new Date().toLocaleString();
-    setTimeout(() => {
-      setLastSyncedTime(nowStr);
-    }, 0);
-    localStorage.setItem('last_synced_time', nowStr);
-  }, []);
-
   // Cloud Synchronization Download
-  const restoreFromCloud = () => {
+  const restoreFromCloud = async () => {
     if (!googleUser) {
       alert("먼저 로그인이 필요합니다.");
-      return;
-    }
-
-    const savedCloud = localStorage.getItem('lenormand_journals_cloud');
-    if (!savedCloud) {
-      alert("클라우드 서버에 저장된 백업 데이터가 없습니다. 먼저 [클라우드로 동기화]를 진행해 주세요.");
       return;
     }
 
@@ -282,13 +324,65 @@ export default function App() {
     }
 
     setIsCloudSyncing(true);
+    setSyncStatus("syncing");
+    setSyncMessage("다운로드 중...");
 
-    setTimeout(() => {
-      const parsed = JSON.parse(savedCloud);
-      setJournals(parsed);
+    try {
+      if (googleUser.isDemo) {
+        setTimeout(() => {
+          const savedCloud = localStorage.getItem('lenormand_journals_cloud');
+          if (!savedCloud) {
+            setIsCloudSyncing(false);
+            setSyncStatus("error");
+            setSyncMessage("백업 없음");
+            alert("데모 스토리지에 저장된 백업 데이터가 없습니다.");
+            return;
+          }
+          const parsed = JSON.parse(savedCloud);
+          setJournals(parsed || []);
+          setIsCloudSyncing(false);
+          setSyncStatus("synced");
+          setSyncMessage("복원 완료(데모)");
+          alert("🎉 [데모 모드] 불러오기 완료! 시뮬레이션용 백업에서 저널 목록을 성공적으로 복원했습니다.");
+        }, 800);
+        return;
+      }
+
+      if (!db) throw new Error("Firebase가 초기화되지 않았습니다.");
+      const docRef = doc(db, 'saves', googleUser.uid);
+      const docSnap = await getDoc(docRef);
+
+      if (docSnap.exists()) {
+        const data = docSnap.data();
+        if (data.lenormand_journals) {
+          const parsed = JSON.parse(data.lenormand_journals);
+          setJournals(parsed || []);
+          localStorage.setItem('lenormand_journals', data.lenormand_journals);
+        }
+        
+        const serverUpdatedAt = data.lenormand_updatedAt || new Date().toISOString();
+        localStorage.setItem('lenormand_updated_at', serverUpdatedAt);
+        const nowStr = new Date(serverUpdatedAt).toLocaleString();
+        setLastSyncedTime(nowStr);
+        localStorage.setItem('last_synced_time', nowStr);
+
+        setIsCloudSyncing(false);
+        setSyncStatus("synced");
+        setSyncMessage("동기화 완료");
+        alert("🎉 불러오기 완료! 클라우드 백업에서 저널 목록을 성공적으로 복원했습니다.");
+      } else {
+        setIsCloudSyncing(false);
+        setSyncStatus("error");
+        setSyncMessage("클라우드 데이터 없음");
+        alert("❌ 클라우드에 백업된 데이터가 없습니다. 먼저 [동기화 업로드]를 진행해 주세요.");
+      }
+    } catch (err) {
+      console.error("Firebase download failed:", err);
       setIsCloudSyncing(false);
-      alert("🎉 불러오기 완료! 클라우드에서 최신 저널 목록을 성공적으로 복원했습니다.");
-    }, 1500);
+      setSyncStatus("error");
+      setSyncMessage("동기화 실패");
+      alert("❌ 복원 중 오류가 발생했습니다: " + (err.message || err));
+    }
   };
 
   // Export database as JSON file
@@ -415,19 +509,31 @@ export default function App() {
     localStorage.setItem('lenormand_theme', theme);
   }, [theme]);
 
-  // Sync journals to LocalStorage
+  // Sync journals to LocalStorage & Auto Cloud Sync
   useEffect(() => {
     localStorage.setItem('lenormand_journals', JSON.stringify(journals));
-    // Trigger Auto-Sync if active and logged in
-    if (isAutoSync && googleUser) {
-      autoSyncToCloud(journals);
+    const now = new Date().toISOString();
+    localStorage.setItem('lenormand_updated_at', now);
+    
+    if (isAutoSync && googleUser && !googleUser.isDemo && db) {
+      const docRef = doc(db, 'saves', googleUser.uid);
+      setSyncStatus("syncing");
+      setDoc(docRef, {
+        lenormand_journals: JSON.stringify(journals),
+        lenormand_updatedAt: now
+      }, { merge: true })
+      .then(() => {
+        const nowStr = new Date(now).toLocaleString();
+        setLastSyncedTime(nowStr);
+        localStorage.setItem('last_synced_time', nowStr);
+        setSyncStatus("synced");
+      })
+      .catch((err) => {
+        console.error("Auto sync failed:", err);
+        setSyncStatus("error");
+      });
     }
-  }, [journals, isAutoSync, googleUser, autoSyncToCloud]);
-
-  // Save googleClientId to LocalStorage
-  useEffect(() => {
-    localStorage.setItem('google_client_id', googleClientId);
-  }, [googleClientId]);
+  }, [journals, isAutoSync, googleUser]);
 
   // Save googleUser to LocalStorage
   useEffect(() => {
@@ -443,50 +549,104 @@ export default function App() {
     localStorage.setItem('is_auto_sync', isAutoSync);
   }, [isAutoSync]);
 
-  // Initialize Google Identity Services (GIS)
+  // Refs to avoid hook dependency loop inside real-time listener
+  const journalsRef = useRef(journals);
   useEffect(() => {
-    let intervalId;
+    journalsRef.current = journals;
+  }, [journals]);
+
+  // Firebase Real-time Sync Listener
+  useEffect(() => {
+    if (!googleUser || googleUser.isDemo || !db) return;
     
-    const initGis = () => {
-      if (window.google && googleClientId && !googleUser) {
-        try {
-          window.google.accounts.id.initialize({
-            client_id: googleClientId,
-            callback: handleGoogleCredentialResponse
-          });
-          
-          setTimeout(() => {
-            if (googleBtnHeaderRef.current) {
-              window.google.accounts.id.renderButton(
-                googleBtnHeaderRef.current,
-                { 
-                  theme: "filled_blue", 
-                  size: "medium", 
-                  shape: "pill",
-                  text: "signin",
-                  logo_alignment: "left"
-                }
-              );
+    const docRef = doc(db, 'saves', googleUser.uid);
+    setSyncStatus("syncing");
+    setSyncMessage("동기화 확인 중...");
+
+    const unsubscribe = onSnapshot(docRef, (docSnap) => {
+      if (docSnap.exists()) {
+        const data = docSnap.data();
+        const serverUpdatedAt = data.lenormand_updatedAt || "";
+        const localUpdatedAt = localStorage.getItem('lenormand_updated_at') || "";
+
+        const hasLocalData = !!localStorage.getItem('lenormand_journals');
+        const shouldDownload = !hasLocalData || (serverUpdatedAt && serverUpdatedAt > localUpdatedAt);
+        const shouldUpload = hasLocalData && (!serverUpdatedAt || localUpdatedAt > serverUpdatedAt);
+
+        if (shouldDownload) {
+          try {
+            if (data.lenormand_journals) {
+              const parsed = JSON.parse(data.lenormand_journals);
+              setJournals(parsed || []);
+              localStorage.setItem('lenormand_journals', data.lenormand_journals);
             }
-          }, 100);
+            if (serverUpdatedAt) {
+              localStorage.setItem('lenormand_updated_at', serverUpdatedAt);
+              const nowStr = new Date(serverUpdatedAt).toLocaleString();
+              setLastSyncedTime(nowStr);
+              localStorage.setItem('last_synced_time', nowStr);
+            }
+            setSyncStatus("synced");
+            setSyncMessage("클라우드 데이터를 성공적으로 불러왔습니다.");
+          } catch (e) {
+            console.error("Failed to parse synced state", e);
+            setSyncStatus("error");
+            setSyncMessage("클라우드 데이터 분석 실패");
+          }
+        } else if (shouldUpload) {
+          const localJournals = localStorage.getItem('lenormand_journals') || JSON.stringify(journalsRef.current);
+          const uploadTime = localUpdatedAt || new Date().toISOString();
           
-          if (intervalId) clearInterval(intervalId);
-        } catch (err) {
-          console.error("Google Auth Init error: ", err);
+          setDoc(docRef, {
+            lenormand_journals: localJournals,
+            lenormand_updatedAt: uploadTime
+          }, { merge: true })
+          .then(() => {
+            localStorage.setItem('lenormand_updated_at', uploadTime);
+            const nowStr = new Date(uploadTime).toLocaleString();
+            setLastSyncedTime(nowStr);
+            localStorage.setItem('last_synced_time', nowStr);
+            setSyncStatus("synced");
+            setSyncMessage("로컬 데이터를 클라우드에 백업했습니다.");
+          })
+          .catch((err) => {
+            console.error("Firebase sync upload failed:", err);
+            setSyncStatus("error");
+            setSyncMessage("백업 업로드 실패");
+          });
+        } else {
+          setSyncStatus("synced");
+          setSyncMessage("최신 상태입니다.");
         }
+      } else {
+        const localJournals = localStorage.getItem('lenormand_journals') || JSON.stringify(journalsRef.current);
+        const uploadTime = localStorage.getItem('lenormand_updated_at') || new Date().toISOString();
+        
+        setDoc(docRef, {
+          lenormand_journals: localJournals,
+          lenormand_updatedAt: uploadTime
+        }, { merge: true })
+        .then(() => {
+          localStorage.setItem('lenormand_updated_at', uploadTime);
+          const nowStr = new Date(uploadTime).toLocaleString();
+          setLastSyncedTime(nowStr);
+          localStorage.setItem('last_synced_time', nowStr);
+          setSyncStatus("synced");
+          setSyncMessage("초기 클라우드 동기화 완료.");
+        })
+        .catch((err) => {
+          console.error("Firebase initial upload failed:", err);
+          setSyncStatus("error");
+          setSyncMessage("초기 동기화 업로드 실패");
+        });
       }
-    };
-
-    initGis();
-
-    if (!window.google && googleClientId && !googleUser) {
-      intervalId = setInterval(initGis, 500);
-    }
-
-    return () => {
-      if (intervalId) clearInterval(intervalId);
-    };
-  }, [googleClientId, googleUser]);
+    }, (error) => {
+      console.error("Firebase sync error:", error);
+      setSyncStatus("error");
+      setSyncMessage("동기화 연결 오류");
+    });
+    return () => unsubscribe();
+  }, [googleUser]);
 
   // Shuffle and Random Draw visual handler
   const triggerShuffleDaily = () => {
@@ -777,66 +937,106 @@ export default function App() {
             </button>
           </div>
 
-          {/* Google Auth Status Block */}
+          {/* Google Auth Status & Cloud Sync Block */}
           {googleUser ? (
-            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', backgroundColor: 'var(--panel-bg-alt)', padding: '4px 12px 4px 4px', borderRadius: '20px', border: '1px solid var(--border-color)' }}>
-              <img 
-                src={googleUser.picture} 
-                alt="Profile" 
-                style={{ width: '28px', height: '28px', borderRadius: '50%', border: '1px solid var(--border-color)' }} 
-              />
-              <div style={{ display: 'flex', flexDirection: 'column' }}>
-                <span style={{ fontSize: '11px', fontWeight: 'bold', lineHeight: 1.1 }}>{googleUser.name}</span>
-                <span style={{ fontSize: '9px', color: 'var(--text-secondary)' }}>{googleUser.email}</span>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+              {/* Cloud Sync Status Badge */}
+              <div style={{ 
+                fontSize: '12px', 
+                backgroundColor: 'rgba(74, 115, 88, 0.08)', 
+                border: '1px solid rgba(74, 115, 88, 0.2)', 
+                padding: '6px 12px', 
+                borderRadius: '10px', 
+                color: 'var(--text-primary)', 
+                fontWeight: 700,
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '6px',
+                userSelect: 'none',
+                height: '36px'
+              }}>
+                <span 
+                  style={{ 
+                    color: syncStatus === 'error' ? '#f87171' : syncStatus === 'syncing' ? '#e67e22' : '#27ae60', 
+                    fontSize: '14px',
+                    lineHeight: 1
+                  }}
+                >
+                  {syncStatus === 'syncing' ? '⏳' : '●'}
+                </span>
+                <span>CLOUD SYNC ({googleUser.name})</span>
               </div>
+
+              {/* Upload Button */}
+              <button 
+                onClick={syncToCloud}
+                style={{ 
+                  padding: '6px 14px', 
+                  fontSize: '12px', 
+                  borderRadius: '10px', 
+                  cursor: 'pointer', 
+                  color: '#ffffff', 
+                  background: 'linear-gradient(135deg, #154734 0%, #0a2217 100%)',
+                  border: '1.5px solid rgba(223, 183, 108, 0.4)',
+                  fontWeight: 700,
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: '4px',
+                  height: '36px'
+                }}
+                title="로컬 데이터를 클라우드에 강제로 업로드(덮어쓰기)"
+              >
+                📤 올리기
+              </button>
+
+              {/* Restore Button */}
+              <button 
+                onClick={restoreFromCloud}
+                style={{ 
+                  padding: '6px 14px', 
+                  fontSize: '12px', 
+                  border: '1px solid var(--border-color)', 
+                  borderRadius: '10px', 
+                  cursor: 'pointer', 
+                  color: 'var(--text-gold)', 
+                  background: 'var(--panel-bg-alt)', 
+                  fontWeight: 700,
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: '4px',
+                  height: '36px'
+                }}
+                title="클라우드 데이터를 브라우저에 강제로 다운로드(복원)"
+              >
+                📥 가져오기
+              </button>
+
+              {/* Logout Button */}
               <button 
                 onClick={handleLogOut}
-                style={{ background: 'none', border: 'none', color: '#f87171', cursor: 'pointer', display: 'flex', padding: '4px' }}
-                title="로그아웃"
+                style={{ 
+                  padding: '6px 14px', 
+                  fontSize: '12px', 
+                  border: '1px solid rgba(248, 113, 113, 0.25)', 
+                  borderRadius: '10px', 
+                  cursor: 'pointer', 
+                  color: '#f87171', 
+                  background: 'rgba(248, 113, 113, 0.05)', 
+                  fontWeight: 700,
+                  height: '36px'
+                }}
               >
-                <LogOut size={13} />
+                로그아웃
               </button>
             </div>
-          ) : googleClientId ? (
-            <div 
-              ref={googleBtnHeaderRef} 
-              id="google-signin-btn-header" 
-              style={{ height: '36px', display: 'flex', alignItems: 'center' }}
-            />
           ) : (
             <button 
               className="gold-button"
-              style={{ height: '36px', padding: '0 14px', fontSize: '12px' }}
-              onClick={() => {
-                setIsSettingsOpen(true);
-                alert("구글 로그인 설정을 위해 '구글 클라이언트 ID'를 먼저 설정창에서 입력해 주세요.");
-              }}
+              style={{ height: '36px', padding: '0 14px', fontSize: '12px', borderRadius: '10px' }}
+              onClick={handleGoogleLogin}
             >
-              <LogIn size={14} />
-              구글 로그인 & 동기화
+              🔑 구글 로그인 연동
             </button>
-          )}
-
-          {/* Cloud Actions Buttons */}
-          {googleUser && (
-            <div style={{ display: 'flex', gap: '4px' }}>
-              <button 
-                className="gold-button-outline"
-                style={{ height: '36px', width: '36px', padding: 0 }}
-                onClick={syncToCloud}
-                title="클라우드로 동기화 업로드"
-              >
-                <CloudUpload size={16} />
-              </button>
-              <button 
-                className="gold-button-outline"
-                style={{ height: '36px', width: '36px', padding: 0 }}
-                onClick={restoreFromCloud}
-                title="클라우드에서 불러오기 복원"
-              >
-                <CloudDownload size={16} />
-              </button>
-            </div>
           )}
 
           {/* Settings cog */}
@@ -1846,37 +2046,62 @@ export default function App() {
 
             <div style={{ padding: '24px', display: 'flex', flexDirection: 'column', gap: '24px', maxHeight: '70vh', overflowY: 'auto' }}>
               
-              {/* Google Client ID config */}
+              {/* Firebase Cloud Sync Info */}
               <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
                 <h3 style={{ fontSize: '15px', color: 'var(--text-gold)', margin: 0, borderBottom: '1px solid var(--border-color)', paddingBottom: '6px' }}>
-                  1. 구글 로그인 설정
+                  1. 구글 클라우드 실시간 동기화 상태
                 </h3>
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-                    <label style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>구글 OAuth Client ID:</label>
-                    <input 
-                      type="text" 
-                      className="parchment-input" 
-                      style={{ fontSize: '14px', height: '38px' }}
-                      placeholder="구글 클라이언트 ID를 입력하세요 (예: 123456...)"
-                      value={googleClientId}
-                      onChange={(e) => setGoogleClientId(e.target.value)}
-                    />
-                  </div>
-                  
-                  {/* Demo Mode Button */}
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', borderTop: '1px dotted var(--border-color)', paddingTop: '10px' }}>
-                    <button 
-                      className="gold-button-outline" 
-                      onClick={() => {
-                        startDemoSession();
-                        setIsSettingsOpen(false);
-                      }}
-                      style={{ width: '100%', height: '38px', fontSize: '13px' }}
-                    >
-                      <Sparkles size={14} />
-                      데모 계정으로 간편 로그인 테스트
-                    </button>
+                  {googleUser ? (
+                    <div style={{ backgroundColor: 'var(--panel-bg-alt)', border: '1px solid var(--border-color)', padding: '12px', borderRadius: '6px', fontSize: '13px' }}>
+                      <div style={{ marginBottom: '6px' }}>계정: <b>{googleUser.email}</b> {googleUser.isDemo && <span style={{ color: 'var(--text-gold)' }}>(데모 계정)</span>}</div>
+                      <div>상태: <span style={{ color: syncStatus === 'error' ? '#f87171' : 'var(--text-gold)', fontWeight: 'bold' }}>{syncMessage || (syncStatus === 'synced' ? '최신 상태입니다.' : '연결됨')}</span></div>
+                    </div>
+                  ) : (
+                    <div style={{ fontSize: '12px', color: 'var(--text-secondary)', lineHeight: '1.5' }}>
+                      파이어베이스를 통해 구글 로그인을 완료하면 기기간 데이터가 실시간으로 안전하게 자동 동기화됩니다.
+                    </div>
+                  )}
+
+                  <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', marginTop: '4px' }}>
+                    {!googleUser ? (
+                      <>
+                        <button 
+                          className="gold-button" 
+                          style={{ flex: 1, height: '38px', fontSize: '13px' }} 
+                          onClick={() => {
+                            handleGoogleLogin();
+                            setIsSettingsOpen(false);
+                          }}
+                        >
+                          <LogIn size={14} />
+                          구글 로그인 진행
+                        </button>
+                        <button 
+                          className="gold-button-outline" 
+                          style={{ flex: 1, height: '38px', fontSize: '13px' }} 
+                          onClick={() => {
+                            startDemoSession();
+                            setIsSettingsOpen(false);
+                          }}
+                        >
+                          <Sparkles size={14} />
+                          데모 계정 로그인
+                        </button>
+                      </>
+                    ) : (
+                      <button 
+                        className="gold-button-outline" 
+                        style={{ width: '100%', height: '38px', fontSize: '13px' }} 
+                        onClick={() => {
+                          handleLogOut();
+                          setIsSettingsOpen(false);
+                        }}
+                      >
+                        <LogOut size={14} />
+                        구글 로그아웃 진행
+                      </button>
+                    )}
                   </div>
                 </div>
               </div>
