@@ -1,2148 +1,1002 @@
-import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
-import { LENORMAND_CARDS, getLenormandCombo } from './constants';
-import { auth, db, googleProvider } from './firebase';
-import { signInWithPopup, signOut, onAuthStateChanged } from 'firebase/auth';
-import { doc, getDoc, onSnapshot, setDoc } from 'firebase/firestore';
-import CardSlot from './components/CardSlot';
-import CardSelectModal from './components/CardSelectModal';
-import { 
-  BookOpen, 
-  Calendar, 
-  Clock, 
-  Moon, 
-  Sparkles, 
-  History, 
-  Trash2, 
-  Plus, 
-  Minus, 
-  Save, 
+import { useEffect, useMemo, useState } from 'react';
+import {
   BookMarked,
-  Info,
-  Layers,
-  Settings,
-  Grid,
-  LogIn,
-  LogOut,
-  CloudUpload,
-  CloudDownload,
+  Calendar,
+  Clock,
   Cloud,
   FileDown,
   FileUp,
-  X,
+  Grid3X3,
+  History,
+  Layers3,
+  LogIn,
+  LogOut,
+  Minus,
+  Moon,
+  Plus,
+  Save,
   Search,
-  Compass
+  Settings,
+  Sparkles,
+  Sun,
+  Trash2,
+  X,
 } from 'lucide-react';
+import { signInWithPopup, signOut, onAuthStateChanged } from 'firebase/auth';
+import { doc, getDoc, setDoc } from 'firebase/firestore';
+import { LENORMAND_CARDS, getLenormandCombo } from './constants';
+import { auth, db, googleProvider } from './firebase';
+import CardSlot from './components/CardSlot';
+import CardSelectModal from './components/CardSelectModal';
+
+const MAX_CARDS = 36;
+
+const safeReadJournals = () => {
+  try {
+    const saved = localStorage.getItem('lenormand_journals');
+    return saved ? JSON.parse(saved) : [];
+  } catch {
+    return [];
+  }
+};
+
+const resizeCards = (cards, count) => {
+  const next = cards.slice(0, count);
+  while (next.length < count) next.push(null);
+  return next;
+};
+
+const rowsForLegacyEntry = (entry) => {
+  if (Array.isArray(entry.rows) && entry.rows.length) return entry.rows;
+  if (entry.cardCount === 36) return [8, 8, 8, 8, 4];
+  const total = entry.cardCount || entry.cards?.length || 3;
+  const cols = Math.max(1, entry.cols || total);
+  const rows = [];
+  let remaining = total;
+  while (remaining > 0) {
+    rows.push(Math.min(cols, remaining));
+    remaining -= cols;
+  }
+  return rows;
+};
+
+const indexedRows = (cards, rows) => {
+  let start = 0;
+  return rows.map((count) => {
+    const result = { start, cards: cards.slice(start, start + count) };
+    start += count;
+    return result;
+  });
+};
+
+const makePair = (cards) => {
+  const filled = cards.map((card, index) => ({ card, index })).filter(({ card }) => card);
+  return {
+    id: `${Date.now()}-${Math.random().toString(36).slice(2)}`,
+    firstIndex: filled[0]?.index ?? '',
+    secondIndex: filled[1]?.index ?? '',
+    note: '',
+  };
+};
+
+const cardFromId = (id) => LENORMAND_CARDS.find((card) => card.id === id) || null;
+
+function ChoicePills({ label, value, onChange, options }) {
+  return (
+    <div className="choice-group">
+      <span className="choice-label">{label}</span>
+      <div className="choice-pills">
+        {options.map((option) => (
+          <button
+            type="button"
+            key={option.value}
+            className={value === option.value ? 'choice-pill active' : 'choice-pill'}
+            onClick={() => onChange(value === option.value ? '' : option.value)}
+          >
+            <span aria-hidden="true">{option.symbol}</span>
+            {option.label}
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function RowLayoutEditor({ rows, setRows, cards, setCards, onOpenCard, onClearCard, onShuffle, isShuffling }) {
+  const total = rows.reduce((sum, count) => sum + count, 0);
+  const boardRows = indexedRows(cards, rows);
+
+  const applyRows = (nextRows) => {
+    const cleaned = nextRows.map((count) => Math.max(1, Math.min(12, Number(count) || 1)));
+    const nextTotal = cleaned.reduce((sum, count) => sum + count, 0);
+    if (!cleaned.length || nextTotal > MAX_CARDS) return;
+    setRows(cleaned);
+    setCards((current) => resizeCards(current, nextTotal));
+  };
+
+  const changeRow = (index, delta) => {
+    const next = [...rows];
+    next[index] += delta;
+    applyRows(next);
+  };
+
+  const setTotal = (count) => {
+    applyRows(count === 36 ? [8, 8, 8, 8, 4] : [count]);
+  };
+
+  const presets = [
+    { label: '한 줄', rows: [Math.min(total, 12)] },
+    { label: '십자 5장', rows: [1, 3, 1] },
+    { label: '3 × 3', rows: [3, 3, 3] },
+    { label: '그랜드 테블루', rows: [8, 8, 8, 8, 4] },
+  ];
+
+  return (
+    <section className="ink-panel spread-panel" data-testid="spread-editor">
+      <div className="section-heading spread-heading">
+        <div>
+          <span className="eyebrow">THE FORMATION</span>
+          <h2><Layers3 size={20} /> 카드 배치</h2>
+        </div>
+        <button className="ink-button red" type="button" onClick={onShuffle} disabled={isShuffling}>
+          <Sparkles size={15} /> {isShuffling ? '카드를 섞는 중…' : '셔플 & 무작위 뽑기'}
+        </button>
+      </div>
+
+      <div className="layout-toolbar">
+        <label className="field-inline">
+          <span>빠른 카드 수</span>
+          <select value={total} onChange={(event) => setTotal(Number(event.target.value))}>
+            {Array.from({ length: 12 }, (_, index) => index + 1).map((count) => (
+              <option key={count} value={count}>{count}장</option>
+            ))}
+            <option value="36">36장</option>
+          </select>
+        </label>
+        <div className="preset-list" aria-label="카드 배치 프리셋">
+          {presets.map((preset) => (
+            <button className="paper-button" type="button" key={preset.label} onClick={() => applyRows(preset.rows)}>
+              {preset.label}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <div className="row-editor" data-testid="row-editor">
+        <div className="row-editor-copy">
+          <Grid3X3 size={17} />
+          <span>각 행의 카드 수를 따로 정할 수 있습니다. 모든 행은 자동으로 가운데 정렬됩니다.</span>
+        </div>
+        <div className="row-controls">
+          {rows.map((count, index) => (
+            <div className="row-control" key={`row-${index}`}>
+              <span>{index + 1}행</span>
+              <button type="button" aria-label={`${index + 1}행 카드 줄이기`} onClick={() => changeRow(index, -1)} disabled={count <= 1}>
+                <Minus size={13} />
+              </button>
+              <strong>{count}</strong>
+              <button type="button" aria-label={`${index + 1}행 카드 늘리기`} onClick={() => changeRow(index, 1)} disabled={total >= MAX_CARDS || count >= 12}>
+                <Plus size={13} />
+              </button>
+              {rows.length > 1 && (
+                <button className="remove-row" type="button" aria-label={`${index + 1}행 삭제`} onClick={() => applyRows(rows.filter((_, rowIndex) => rowIndex !== index))}>
+                  <X size={13} />
+                </button>
+              )}
+            </div>
+          ))}
+          <button className="paper-button add-row" type="button" onClick={() => applyRows([...rows, 1])} disabled={total >= MAX_CARDS}>
+            <Plus size={14} /> 행 추가
+          </button>
+        </div>
+      </div>
+
+      <div className={total === 36 ? 'card-board grand-tableau-grid' : 'card-board'}>
+        {boardRows.map((row, rowIndex) => (
+          <div className="card-board-row" key={`board-${rowIndex}`} data-row-count={row.cards.length}>
+            {row.cards.map((card, columnIndex) => {
+              const globalIndex = row.start + columnIndex;
+              return (
+                <CardSlot
+                  key={globalIndex}
+                  card={card}
+                  index={globalIndex}
+                  onSelect={(emptyCard) => emptyCard === null ? onClearCard(globalIndex) : onOpenCard(globalIndex)}
+                />
+              );
+            })}
+          </div>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function CardKeywordNotes({ cards, memos, setMemos }) {
+  const filled = cards.map((card, index) => ({ card, index })).filter(({ card }) => card);
+  return (
+    <section className="ink-panel">
+      <div className="section-heading">
+        <div>
+          <span className="eyebrow">SYMBOLS & KEYWORDS</span>
+          <h2>카드별 키워드 해석</h2>
+        </div>
+      </div>
+      {!filled.length ? (
+        <p className="empty-copy">카드를 선택하면 카드별 해석 칸이 나타납니다.</p>
+      ) : (
+        <div className="keyword-list">
+          {filled.map(({ card, index }) => (
+            <article className="keyword-card" key={`${card.id}-${index}`}>
+              <img src={card.imgUrl} alt="" />
+              <div className="keyword-copy">
+                <div className="keyword-title">
+                  <span>POSITION {index + 1}</span>
+                  <strong>{card.id}. {card.nameKo} · {card.nameEn}</strong>
+                </div>
+                <p>{card.keywords}</p>
+                <input
+                  className="paper-input keyword-input"
+                  value={memos[index] || ''}
+                  onChange={(event) => setMemos((current) => ({ ...current, [index]: event.target.value }))}
+                  placeholder="이 리딩에서 이 카드가 뜻하는 핵심을 적어보세요."
+                />
+              </div>
+            </article>
+          ))}
+        </div>
+      )}
+    </section>
+  );
+}
+
+function PairingNotes({ cards, items, setItems }) {
+  const filled = cards.map((card, index) => ({ card, index })).filter(({ card }) => card);
+  const update = (id, patch) => setItems((current) => current.map((item) => item.id === id ? { ...item, ...patch } : item));
+  const addPair = () => setItems((current) => [...current, makePair(cards)]);
+
+  return (
+    <section className="ink-panel pairing-panel" data-testid="pairing-notes">
+      <div className="section-heading pairing-heading">
+        <div>
+          <span className="eyebrow">CARD COMBINATIONS</span>
+          <h2>카드 조합 해석</h2>
+          <p>위에서 선택한 카드 두 장을 골라, 함께 읽을 때 떠오르는 의미를 자유롭게 기록하세요.</p>
+        </div>
+        <button className="ink-button" type="button" onClick={addPair} disabled={filled.length < 2}>
+          <Plus size={15} /> 조합 추가
+        </button>
+      </div>
+
+      {!items.length ? (
+        <button className="pairing-empty" type="button" onClick={addPair} disabled={filled.length < 2}>
+          <Plus size={22} />
+          <span>{filled.length < 2 ? '카드를 두 장 이상 선택하면 조합을 기록할 수 있습니다.' : '첫 카드 조합 해석을 추가하세요.'}</span>
+        </button>
+      ) : (
+        <div className="pairing-list">
+          {items.map((item, index) => {
+            const firstCard = cards[item.firstIndex];
+            const secondCard = cards[item.secondIndex];
+            const suggestion = firstCard && secondCard ? getLenormandCombo(firstCard, secondCard) : '';
+            return (
+              <article className="pairing-row" key={item.id}>
+                <div className="pairing-number">{String(index + 1).padStart(2, '0')}</div>
+                <div className="pairing-fields">
+                  <div className="pair-selects">
+                    <label>
+                      <span>첫 번째 카드</span>
+                      <select value={item.firstIndex} onChange={(event) => update(item.id, { firstIndex: event.target.value === '' ? '' : Number(event.target.value) })}>
+                        <option value="">카드 선택</option>
+                        {filled.map(({ card, index: cardIndex }) => (
+                          <option key={`first-${cardIndex}`} value={cardIndex} disabled={cardIndex === item.secondIndex}>
+                            {cardIndex + 1}번 · {card.nameKo}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    <span className="pair-mark">×</span>
+                    <label>
+                      <span>두 번째 카드</span>
+                      <select value={item.secondIndex} onChange={(event) => update(item.id, { secondIndex: event.target.value === '' ? '' : Number(event.target.value) })}>
+                        <option value="">카드 선택</option>
+                        {filled.map(({ card, index: cardIndex }) => (
+                          <option key={`second-${cardIndex}`} value={cardIndex} disabled={cardIndex === item.firstIndex}>
+                            {cardIndex + 1}번 · {card.nameKo}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                  </div>
+                  {suggestion && <p className="combo-suggestion"><strong>참고 해석</strong> {suggestion}</p>}
+                  <textarea
+                    className="paper-input"
+                    value={item.note}
+                    onChange={(event) => update(item.id, { note: event.target.value })}
+                    placeholder="두 카드가 서로의 의미를 어떻게 바꾸거나 강화하는지 적어보세요."
+                  />
+                </div>
+                <button className="icon-button danger" type="button" aria-label={`${index + 1}번째 조합 삭제`} onClick={() => setItems((current) => current.filter((pair) => pair.id !== item.id))}>
+                  <Trash2 size={16} />
+                </button>
+              </article>
+            );
+          })}
+        </div>
+      )}
+    </section>
+  );
+}
+
+function HistoryDetail({ entry, currentCardIds, onLoad, onDelete }) {
+  const cards = (entry.cards || []).map(cardFromId);
+  const period = entry.period === 'night' ? '취침 전 리딩' : '아침 리딩';
+  const primary = entry.primaryNote ?? entry.morningNote ?? '';
+  const secondary = entry.secondaryNote ?? entry.eveningNote ?? '';
+  const combinations = entry.combinations || [];
+  const generalMemo = entry.generalMemo || '';
+
+  return (
+    <div className="history-detail">
+      <div className="history-detail-actions">
+        <button className="paper-button" type="button" onClick={() => onLoad(entry)}>이 기록을 작업창에 불러오기</button>
+        <button className="icon-button danger" type="button" aria-label="기록 삭제" onClick={() => onDelete(entry.id)}><Trash2 size={16} /></button>
+      </div>
+      <div className="history-detail-title">
+        <span className="eyebrow">{entry.type === 'daily' ? period : 'FREE READING'}</span>
+        <h3>{entry.type === 'daily' ? entry.date : entry.question}</h3>
+        <small>{entry.timestamp}</small>
+      </div>
+      <div className="history-card-strip">
+        {cards.map((card, index) => card ? (
+          <div className={currentCardIds.has(card.id) ? 'history-card-chip match' : 'history-card-chip'} key={`${card.id}-${index}`}>
+            <img src={card.imgUrl} alt="" />
+            <span>{index + 1}. {card.nameKo}</span>
+          </div>
+        ) : null)}
+      </div>
+      {Object.keys(entry.memos || {}).length > 0 && (
+        <div className="history-note-block">
+          <strong>카드별 키워드</strong>
+          {Object.entries(entry.memos).map(([index, note]) => note ? <p key={index}><b>{Number(index) + 1}번</b> {note}</p> : null)}
+        </div>
+      )}
+      {entry.type === 'daily' ? (
+        <>
+          {primary && <div className="history-note-block"><strong>{entry.period === 'night' ? '오늘의 인상적인 장면' : '아침의 예측'}</strong><p>{primary}</p></div>}
+          {secondary && <div className="history-note-block"><strong>{entry.period === 'night' ? '카드와 하루의 일치도' : '하루 회고'}</strong><p>{secondary}</p></div>}
+        </>
+      ) : (
+        <>
+          {entry.prediction && <div className="history-note-block"><strong>스프레드 해석</strong><p>{entry.prediction}</p></div>}
+          {entry.feedback && <div className="history-note-block"><strong>결과와 피드백</strong><p>{entry.feedback}</p></div>}
+        </>
+      )}
+      {combinations.filter((pair) => pair.note).length > 0 && (
+        <div className="history-note-block">
+          <strong>카드 조합 해석</strong>
+          {combinations.map((pair, index) => pair.note ? (
+            <p key={pair.id || index}>
+              <b>{cards[pair.firstIndex]?.nameKo || '?'} × {cards[pair.secondIndex]?.nameKo || '?'}</b> {pair.note}
+            </p>
+          ) : null)}
+        </div>
+      )}
+      {generalMemo && <div className="history-note-block"><strong>자유 메모</strong><p>{generalMemo}</p></div>}
+    </div>
+  );
+}
+
+function HistoryDrawer({ open, onClose, journals, currentCards, onLoad, onDelete }) {
+  const [query, setQuery] = useState('');
+  const [type, setType] = useState('all');
+  const [sameCardOnly, setSameCardOnly] = useState(false);
+  const [selectedId, setSelectedId] = useState(null);
+  const currentCardIds = useMemo(() => new Set(currentCards.filter(Boolean).map((card) => card.id)), [currentCards]);
+
+  const records = useMemo(() => journals.map((entry) => {
+    const ids = new Set((entry.cards || []).filter(Boolean));
+    const overlap = [...currentCardIds].filter((id) => ids.has(id));
+    return { entry, overlap };
+  }).filter(({ entry, overlap }) => {
+    if (type !== 'all' && entry.type !== type) return false;
+    if (sameCardOnly && currentCardIds.size > 0 && overlap.length === 0) return false;
+    const needle = query.trim().toLowerCase();
+    if (!needle) return true;
+    const cardText = (entry.cards || []).map(cardFromId).filter(Boolean).map((card) => `${card.nameKo} ${card.nameEn} ${card.keywords}`).join(' ');
+    const text = [entry.date, entry.question, entry.primaryNote, entry.secondaryNote, entry.morningNote, entry.eveningNote, entry.prediction, entry.feedback, entry.generalMemo, cardText, ...(entry.combinations || []).map((pair) => pair.note)].join(' ').toLowerCase();
+    return text.includes(needle);
+  }).sort((a, b) => b.overlap.length - a.overlap.length), [journals, currentCardIds, query, type, sameCardOnly]);
+
+  const selected = journals.find((entry) => entry.id === selectedId);
+  const matchingCount = records.filter(({ overlap }) => overlap.length > 0).length;
+
+  return (
+    <aside className={open ? 'history-drawer open' : 'history-drawer'} aria-hidden={!open} data-testid="history-drawer">
+      <div className="drawer-header">
+        <div>
+          <span className="eyebrow">VISIBLE MEMORY</span>
+          <h2><History size={19} /> 과거 기록 비교</h2>
+        </div>
+        <button className="icon-button" type="button" onClick={onClose} aria-label="과거 기록 닫기"><X size={20} /></button>
+      </div>
+      <p className="drawer-intro">작업창을 그대로 둔 채 이전 해석을 펼쳐 비교할 수 있습니다.</p>
+      <div className="history-search">
+        <Search size={16} />
+        <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="카드, 날짜, 질문, 메모 검색" />
+      </div>
+      <div className="history-filters">
+        {[
+          ['all', '전체'],
+          ['daily', '데일리'],
+          ['free', '프리'],
+        ].map(([value, label]) => (
+          <button type="button" key={value} className={type === value ? 'active' : ''} onClick={() => setType(value)}>{label}</button>
+        ))}
+      </div>
+      <label className="match-toggle">
+        <input type="checkbox" checked={sameCardOnly} onChange={(event) => setSameCardOnly(event.target.checked)} disabled={!currentCardIds.size} />
+        <span>현재 카드와 겹치는 기록만 보기</span>
+        <b>{currentCardIds.size ? matchingCount : 0}</b>
+      </label>
+
+      <div className="history-scroll">
+        {selected ? (
+          <>
+            <button className="back-to-list" type="button" onClick={() => setSelectedId(null)}>← 기록 목록으로</button>
+            <HistoryDetail entry={selected} currentCardIds={currentCardIds} onLoad={onLoad} onDelete={(id) => { onDelete(id); setSelectedId(null); }} />
+          </>
+        ) : records.length ? (
+          <div className="history-list">
+            {records.map(({ entry, overlap }) => {
+              const cards = (entry.cards || []).map(cardFromId).filter(Boolean);
+              return (
+                <button className="history-record" type="button" key={entry.id} onClick={() => setSelectedId(entry.id)}>
+                  <div className="history-record-top">
+                    <span>{entry.type === 'daily' ? (entry.period === 'night' ? '취침 전' : '데일리') : '프리 리딩'}</span>
+                    {overlap.length > 0 && <b>{overlap.length}장 일치</b>}
+                  </div>
+                  <strong>{entry.type === 'daily' ? entry.date : entry.question}</strong>
+                  <div className="mini-card-list">
+                    {cards.slice(0, 7).map((card, index) => (
+                      <span className={currentCardIds.has(card.id) ? 'match' : ''} key={`${card.id}-${index}`}>{card.nameKo}</span>
+                    ))}
+                    {cards.length > 7 && <span>+{cards.length - 7}</span>}
+                  </div>
+                  <small>{entry.timestamp}</small>
+                </button>
+              );
+            })}
+          </div>
+        ) : (
+          <p className="empty-copy">조건에 맞는 기록이 없습니다.</p>
+        )}
+      </div>
+    </aside>
+  );
+}
 
 export default function App() {
-  // Theme State
-  const [theme, setTheme] = useState(() => {
-    return localStorage.getItem('lenormand_theme') || 'blue-owl';
-  });
-
-  // Tab State
-  const [activeTab, setActiveTab] = useState('daily'); // 'daily' or 'free'
-
-  // Daily Reading State
-  const [dailyCardCount, setDailyCardCount] = useState(3);
-  const [dailyCols, setDailyCols] = useState(3);
-  const [dailyCards, setDailyCards] = useState([null, null, null]);
+  const [activeTab, setActiveTab] = useState('daily');
+  const [dailyPeriod, setDailyPeriod] = useState('morning');
   const [dailyDate, setDailyDate] = useState('');
+  const [dailyRows, setDailyRows] = useState([3]);
+  const [dailyCards, setDailyCards] = useState([null, null, null]);
   const [dailyMemos, setDailyMemos] = useState({});
-  const [dailyMorningNote, setDailyMorningNote] = useState('');
-  const [dailyEveningNote, setDailyEveningNote] = useState('');
+  const [dailyCombinations, setDailyCombinations] = useState([]);
+  const [dailyPrimaryNote, setDailyPrimaryNote] = useState('');
+  const [dailySecondaryNote, setDailySecondaryNote] = useState('');
+  const [dailyGeneralMemo, setDailyGeneralMemo] = useState('');
   const [dailyMood, setDailyMood] = useState('');
   const [dailySatisfaction, setDailySatisfaction] = useState('');
 
-  // Free Reading State
   const [freeQuestion, setFreeQuestion] = useState('');
-  const [freeCardCount, setFreeCardCount] = useState(3);
-  const [freeCols, setFreeCols] = useState(3);
+  const [freeRows, setFreeRows] = useState([3]);
   const [freeCards, setFreeCards] = useState([null, null, null]);
+  const [freeMemos, setFreeMemos] = useState({});
+  const [freeCombinations, setFreeCombinations] = useState([]);
   const [freePrediction, setFreePrediction] = useState('');
   const [freeFeedback, setFreeFeedback] = useState('');
+  const [freeGeneralMemo, setFreeGeneralMemo] = useState('');
 
-  // History State
-  const [journals, setJournals] = useState(() => {
-    const saved = localStorage.getItem('lenormand_journals');
-    return saved ? JSON.parse(saved) : [];
-  });
-  const [isSidebarOpen, setIsSidebarOpen] = useState(false);
-
-  // Modal State
+  const [journals, setJournals] = useState(safeReadJournals);
+  const [isHistoryOpen, setIsHistoryOpen] = useState(true);
+  const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [activeSlotIndex, setActiveSlotIndex] = useState(null);
-
-  // Settings & Cloud Sync State
-  const [isSettingsOpen, setIsSettingsOpen] = useState(false);
-  const [googleUser, setGoogleUser] = useState(null);
-  const [syncStatus, setSyncStatus] = useState("idle"); // 'idle' | 'syncing' | 'synced' | 'error'
-  const [syncMessage, setSyncMessage] = useState("");
-  const [isCloudSyncing, setIsCloudSyncing] = useState(false);
-  const [lastSyncedTime, setLastSyncedTime] = useState(() => {
-    return localStorage.getItem('last_synced_time') || null;
-  });
-  const [isAutoSync, setIsAutoSync] = useState(() => {
-    return localStorage.getItem('is_auto_sync') === 'true';
-  });
-
-  // Convenience features states
   const [isShufflingDaily, setIsShufflingDaily] = useState(false);
   const [isShufflingFree, setIsShufflingFree] = useState(false);
-  const [historySearch, setHistorySearch] = useState('');
-  const [historyTypeFilter, setHistoryTypeFilter] = useState('all');
+  const [googleUser, setGoogleUser] = useState(null);
+  const [isAutoSync, setIsAutoSync] = useState(() => localStorage.getItem('is_auto_sync') === 'true');
+  const [syncStatus, setSyncStatus] = useState('idle');
+  const [lastSyncedTime, setLastSyncedTime] = useState(() => localStorage.getItem('last_synced_time') || '');
+  const [saveNotice, setSaveNotice] = useState('');
 
-  // ==========================================
-  // Core Functions & Handlers (Fully Defined)
-  // ==========================================
+  const currentCards = activeTab === 'daily' ? dailyCards : freeCards;
+  const currentCard = activeSlotIndex === null ? null : currentCards[activeSlotIndex];
 
-  // Helper to chunk cards array into rows
-  const chunkCards = (arr, size) => {
-    if (arr.length === 36) {
-      // Grand Tableau custom chunking: 8, 8, 8, 8, 4
-      return [
-        arr.slice(0, 8),
-        arr.slice(8, 16),
-        arr.slice(16, 24),
-        arr.slice(24, 32),
-        arr.slice(32, 36)
-      ];
-    }
-    const chunks = [];
-    for (let i = 0; i < arr.length; i += size) {
-      chunks.push(arr.slice(i, i + size));
-    }
-    return chunks;
-  };
+  useEffect(() => {
+    document.body.className = 'theme-archive';
+    localStorage.removeItem('lenormand_theme');
+  }, []);
 
-  // Time Puncher
-  const punchTime = () => {
-    const now = new Date();
-    const yyyy = now.getFullYear();
-    const mm = String(now.getMonth() + 1).padStart(2, '0');
-    const dd = String(now.getDate()).padStart(2, '0');
-    const hh = String(now.getHours()).padStart(2, '0');
-    const min = String(now.getMinutes()).padStart(2, '0');
-    setDailyDate(`${yyyy}-${mm}-${dd} ${hh}:${min}`);
-  };
+  useEffect(() => {
+    localStorage.setItem('lenormand_journals', JSON.stringify(journals));
+  }, [journals]);
 
-  // Open Modal for slot selection
-  const openCardSelectModal = (index) => {
+  useEffect(() => {
+    localStorage.setItem('is_auto_sync', String(isAutoSync));
+  }, [isAutoSync]);
+
+  useEffect(() => {
+    if (!auth) return undefined;
+    return onAuthStateChanged(auth, (user) => setGoogleUser(user));
+  }, []);
+
+  useEffect(() => {
+    if (!isAutoSync || !googleUser || !db) return undefined;
+    const timer = window.setTimeout(async () => {
+      try {
+        setSyncStatus('syncing');
+        const now = new Date().toISOString();
+        await setDoc(doc(db, 'saves', googleUser.uid), { lenormand_journals: JSON.stringify(journals), lenormand_updatedAt: now }, { merge: true });
+        const label = new Date(now).toLocaleString();
+        setLastSyncedTime(label);
+        localStorage.setItem('last_synced_time', label);
+        setSyncStatus('synced');
+      } catch {
+        setSyncStatus('error');
+      }
+    }, 700);
+    return () => window.clearTimeout(timer);
+  }, [journals, isAutoSync, googleUser]);
+
+  const openCard = (index) => {
     setActiveSlotIndex(index);
     setIsModalOpen(true);
   };
 
-  // Handle Card Selection
-  const handleSelectCard = (card) => {
+  const clearCard = (index, mode) => {
+    const setCards = mode === 'daily' ? setDailyCards : setFreeCards;
+    const setMemos = mode === 'daily' ? setDailyMemos : setFreeMemos;
+    const setCombinations = mode === 'daily' ? setDailyCombinations : setFreeCombinations;
+    setCards((cards) => cards.map((card, cardIndex) => cardIndex === index ? null : card));
+    setMemos((memos) => {
+      const next = { ...memos };
+      delete next[index];
+      return next;
+    });
+    setCombinations((pairs) => pairs.filter((pair) => pair.firstIndex !== index && pair.secondIndex !== index));
+  };
+
+  const selectCard = (card) => {
+    if (activeSlotIndex === null) return;
+    const setCards = activeTab === 'daily' ? setDailyCards : setFreeCards;
+    setCards((cards) => cards.map((current, index) => index === activeSlotIndex ? card : current));
+  };
+
+  const shuffle = (mode) => {
+    const cards = mode === 'daily' ? dailyCards : freeCards;
+    const setCards = mode === 'daily' ? setDailyCards : setFreeCards;
+    const setBusy = mode === 'daily' ? setIsShufflingDaily : setIsShufflingFree;
+    setBusy(true);
+    const shuffled = [...LENORMAND_CARDS].sort(() => Math.random() - 0.5).slice(0, cards.length);
+    window.setTimeout(() => {
+      setCards(shuffled);
+      setBusy(false);
+    }, 260);
+  };
+
+  const stampTime = () => {
+    const now = new Date();
+    const date = new Intl.DateTimeFormat('ko-KR', { dateStyle: 'medium', timeStyle: 'short' }).format(now);
+    setDailyDate(date);
+  };
+
+  const saveJournal = () => {
+    const timestamp = new Date().toLocaleString();
     if (activeTab === 'daily') {
-      setDailyCards(prev => {
-        const copy = [...prev];
-        copy[activeSlotIndex] = card;
-        return copy;
-      });
-      if (!card) {
-        setDailyMemos(prev => {
-          const copy = { ...prev };
-          delete copy[activeSlotIndex];
-          return copy;
-        });
-      }
+      const hasContent = dailyCards.some(Boolean) || dailyPrimaryNote || dailySecondaryNote || dailyGeneralMemo;
+      if (!hasContent) return window.alert('저장할 카드나 메모가 없습니다.');
+      const entry = {
+        id: Date.now().toString(),
+        timestamp,
+        type: 'daily',
+        period: dailyPeriod,
+        date: dailyDate || new Date().toLocaleString(),
+        cardCount: dailyCards.length,
+        rows: dailyRows,
+        cols: Math.max(...dailyRows),
+        cards: dailyCards.map((card) => card?.id || null),
+        memos: dailyMemos,
+        combinations: dailyCombinations,
+        primaryNote: dailyPrimaryNote,
+        secondaryNote: dailySecondaryNote,
+        morningNote: dailyPrimaryNote,
+        eveningNote: dailySecondaryNote,
+        generalMemo: dailyGeneralMemo,
+        mood: dailyMood,
+        satisfaction: dailySatisfaction,
+      };
+      setJournals((current) => [entry, ...current]);
     } else {
-      setFreeCards(prev => {
-        const copy = [...prev];
-        copy[activeSlotIndex] = card;
-        return copy;
-      });
+      const hasContent = freeCards.some(Boolean) || freeQuestion || freePrediction || freeFeedback || freeGeneralMemo;
+      if (!hasContent) return window.alert('저장할 카드나 메모가 없습니다.');
+      const entry = {
+        id: Date.now().toString(),
+        timestamp,
+        type: 'free',
+        question: freeQuestion || '무제 질문',
+        cardCount: freeCards.length,
+        rows: freeRows,
+        cols: Math.max(...freeRows),
+        cards: freeCards.map((card) => card?.id || null),
+        memos: freeMemos,
+        combinations: freeCombinations,
+        prediction: freePrediction,
+        feedback: freeFeedback,
+        generalMemo: freeGeneralMemo,
+      };
+      setJournals((current) => [entry, ...current]);
+    }
+    setSaveNotice('기록을 저장했습니다. 오른쪽 과거 기록에서 바로 비교할 수 있습니다.');
+  };
+
+  const loadJournal = (entry) => {
+    if (!window.confirm('현재 작성 중인 내용을 이 과거 기록으로 바꿀까요?')) return;
+    const cards = (entry.cards || []).map(cardFromId);
+    if (entry.type === 'daily') {
+      setActiveTab('daily');
+      setDailyPeriod(entry.period || 'morning');
+      setDailyDate(entry.date || '');
+      setDailyRows(rowsForLegacyEntry(entry));
+      setDailyCards(cards);
+      setDailyMemos(entry.memos || {});
+      setDailyCombinations(entry.combinations || []);
+      setDailyPrimaryNote(entry.primaryNote ?? entry.morningNote ?? '');
+      setDailySecondaryNote(entry.secondaryNote ?? entry.eveningNote ?? '');
+      setDailyGeneralMemo(entry.generalMemo || '');
+      setDailyMood(entry.mood || '');
+      setDailySatisfaction(entry.satisfaction || '');
+    } else {
+      setActiveTab('free');
+      setFreeQuestion(entry.question || '');
+      setFreeRows(rowsForLegacyEntry(entry));
+      setFreeCards(cards);
+      setFreeMemos(entry.memos || {});
+      setFreeCombinations(entry.combinations || []);
+      setFreePrediction(entry.prediction || '');
+      setFreeFeedback(entry.feedback || '');
+      setFreeGeneralMemo(entry.generalMemo || '');
     }
   };
 
-  // Update Daily Memos
-  const updateDailyMemo = (index, value) => {
-    setDailyMemos(prev => ({
-      ...prev,
-      [index]: value
-    }));
+  const deleteJournal = (id) => {
+    if (window.confirm('이 기록을 삭제할까요?')) setJournals((current) => current.filter((entry) => entry.id !== id));
   };
 
-  // Clear workspace
   const clearWorkspace = () => {
-    if (!window.confirm('현재 작업 영역을 초기화하시겠습니까?')) return;
+    if (!window.confirm('현재 작업창의 내용을 모두 비울까요?')) return;
     if (activeTab === 'daily') {
-      setDailyCards(Array(dailyCardCount).fill(null));
+      setDailyCards(Array(dailyRows.reduce((sum, count) => sum + count, 0)).fill(null));
       setDailyDate('');
       setDailyMemos({});
-      setDailyMorningNote('');
-      setDailyEveningNote('');
+      setDailyCombinations([]);
+      setDailyPrimaryNote('');
+      setDailySecondaryNote('');
+      setDailyGeneralMemo('');
       setDailyMood('');
       setDailySatisfaction('');
     } else {
       setFreeQuestion('');
-      setFreeCards(Array(freeCardCount).fill(null));
+      setFreeCards(Array(freeRows.reduce((sum, count) => sum + count, 0)).fill(null));
+      setFreeMemos({});
+      setFreeCombinations([]);
       setFreePrediction('');
       setFreeFeedback('');
+      setFreeGeneralMemo('');
     }
   };
 
-  // Firebase Auth Listener
-  useEffect(() => {
-    if (!auth) return;
-    const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
-      if (currentUser) {
-        setGoogleUser({
-          uid: currentUser.uid,
-          name: currentUser.displayName,
-          email: currentUser.email,
-          picture: currentUser.photoURL,
-          isLoggedIn: true,
-          isDemo: false
-        });
-      } else {
-        const saved = localStorage.getItem('google_user');
-        if (saved) {
-          const parsed = JSON.parse(saved);
-          if (parsed.isDemo) {
-            setGoogleUser(parsed);
-          } else {
-            setGoogleUser(null);
-          }
-        } else {
-          setGoogleUser(null);
-        }
-      }
-    });
-    return () => unsubscribe();
-  }, []);
-
-  const handleGoogleLogin = async () => {
+  const login = async () => {
     try {
-      if (auth && googleProvider) {
-        await signInWithPopup(auth, googleProvider);
-      }
+      await signInWithPopup(auth, googleProvider);
     } catch (error) {
-      console.error("Login failed:", error);
-      alert("로그인 실패: " + (error.message || "알 수 없는 오류"));
+      window.alert(`로그인에 실패했습니다: ${error.message}`);
     }
   };
 
-  // Start Demo Mode Session
-  const startDemoSession = () => {
-    const demoUser = {
-      uid: "demo-user-id",
-      name: "Imwul (데모 계정)",
-      email: "imwul@github.com",
-      picture: "https://api.dicebear.com/7.x/lorelei/svg?seed=imwul",
-      isLoggedIn: true,
-      isDemo: true
-    };
-    setGoogleUser(demoUser);
-    localStorage.setItem('google_user', JSON.stringify(demoUser));
-    alert("데모 모드로 로그인되었습니다! 클라우드 동기화 시뮬레이션을 진행할 수 있습니다.");
+  const logout = async () => {
+    await signOut(auth);
   };
 
-  // Google Log Out
-  const handleLogOut = async () => {
-    if (!window.confirm("구글 계정에서 로그아웃하시겠습니까?")) return;
-    try {
-      if (googleUser && googleUser.isDemo) {
-        setGoogleUser(null);
-        localStorage.removeItem('google_user');
-        alert("로그아웃 되었습니다.");
-      } else {
-        if (auth) {
-          await signOut(auth);
-          localStorage.removeItem('google_user');
-          alert("로그아웃 되었습니다.");
-        }
-      }
-    } catch (error) {
-      console.error("Logout failed:", error);
-    }
-  };
-
-  // Cloud Synchronization Upload
   const syncToCloud = async () => {
-    if (!googleUser) {
-      alert("먼저 로그인이 필요합니다.");
-      return;
-    }
-    
-    setIsCloudSyncing(true);
-    setSyncStatus("syncing");
-    setSyncMessage("업로드 중...");
-
+    if (!googleUser || !db) return window.alert('먼저 구글 계정으로 로그인해 주세요.');
     try {
-      if (googleUser.isDemo) {
-        setTimeout(() => {
-          localStorage.setItem('lenormand_journals_cloud', JSON.stringify(journals));
-          const nowStr = new Date().toLocaleString();
-          setLastSyncedTime(nowStr);
-          localStorage.setItem('last_synced_time', nowStr);
-          setIsCloudSyncing(false);
-          setSyncStatus("synced");
-          setSyncMessage("동기화 완료(데모)");
-          alert("🎉 [데모 모드] 클라우드 동기화 완료! 현재 모든 로컬 저널 데이터가 시뮬레이션용 스토리지에 성공적으로 백업되었습니다.");
-        }, 800);
-        return;
-      }
-
-      if (!db) throw new Error("Firebase가 초기화되지 않았습니다.");
-      const docRef = doc(db, 'saves', googleUser.uid);
-      const gsStr = JSON.stringify(journals);
+      setSyncStatus('syncing');
       const now = new Date().toISOString();
-
-      await setDoc(docRef, {
-        lenormand_journals: gsStr,
-        lenormand_updatedAt: now
-      }, { merge: true });
-
-      localStorage.setItem('lenormand_updated_at', now);
-      const nowStr = new Date(now).toLocaleString();
-      setLastSyncedTime(nowStr);
-      localStorage.setItem('last_synced_time', nowStr);
-      
-      setIsCloudSyncing(false);
-      setSyncStatus("synced");
-      setSyncMessage("동기화 완료");
-      alert("🎉 클라우드 동기화 완료! 현재 모든 로컬 저널 데이터가 구글 파이어베이스 클라우드에 안전하게 보관되었습니다.");
-    } catch (err) {
-      console.error("Firebase upload failed:", err);
-      setIsCloudSyncing(false);
-      setSyncStatus("error");
-      setSyncMessage("동기화 실패");
-      alert("❌ 동기화 중 오류가 발생했습니다: " + (err.message || err));
+      await setDoc(doc(db, 'saves', googleUser.uid), { lenormand_journals: JSON.stringify(journals), lenormand_updatedAt: now }, { merge: true });
+      const label = new Date(now).toLocaleString();
+      setLastSyncedTime(label);
+      localStorage.setItem('last_synced_time', label);
+      setSyncStatus('synced');
+      window.alert('현재 기록을 클라우드에 백업했습니다.');
+    } catch (error) {
+      setSyncStatus('error');
+      window.alert(`동기화에 실패했습니다: ${error.message}`);
     }
   };
 
-  // Cloud Synchronization Download
   const restoreFromCloud = async () => {
-    if (!googleUser) {
-      alert("먼저 로그인이 필요합니다.");
-      return;
-    }
-
-    if (!window.confirm("주의! 클라우드 백업을 불러오면 현재 작성 중인 로컬의 저널 목록이 모두 덮어씌워집니다. 계속 진행하시겠습니까?")) {
-      return;
-    }
-
-    setIsCloudSyncing(true);
-    setSyncStatus("syncing");
-    setSyncMessage("다운로드 중...");
-
+    if (!googleUser || !db) return window.alert('먼저 구글 계정으로 로그인해 주세요.');
+    if (!window.confirm('클라우드 기록으로 현재 기록 목록을 바꿀까요?')) return;
     try {
-      if (googleUser.isDemo) {
-        setTimeout(() => {
-          const savedCloud = localStorage.getItem('lenormand_journals_cloud');
-          if (!savedCloud) {
-            setIsCloudSyncing(false);
-            setSyncStatus("error");
-            setSyncMessage("백업 없음");
-            alert("데모 스토리지에 저장된 백업 데이터가 없습니다.");
-            return;
-          }
-          const parsed = JSON.parse(savedCloud);
-          setJournals(parsed || []);
-          setIsCloudSyncing(false);
-          setSyncStatus("synced");
-          setSyncMessage("복원 완료(데모)");
-          alert("🎉 [데모 모드] 불러오기 완료! 시뮬레이션용 백업에서 저널 목록을 성공적으로 복원했습니다.");
-        }, 800);
-        return;
-      }
-
-      if (!db) throw new Error("Firebase가 초기화되지 않았습니다.");
-      const docRef = doc(db, 'saves', googleUser.uid);
-      const docSnap = await getDoc(docRef);
-
-      if (docSnap.exists()) {
-        const data = docSnap.data();
-        if (data.lenormand_journals) {
-          const parsed = JSON.parse(data.lenormand_journals);
-          setJournals(parsed || []);
-          localStorage.setItem('lenormand_journals', data.lenormand_journals);
-        }
-        
-        const serverUpdatedAt = data.lenormand_updatedAt || new Date().toISOString();
-        localStorage.setItem('lenormand_updated_at', serverUpdatedAt);
-        const nowStr = new Date(serverUpdatedAt).toLocaleString();
-        setLastSyncedTime(nowStr);
-        localStorage.setItem('last_synced_time', nowStr);
-
-        setIsCloudSyncing(false);
-        setSyncStatus("synced");
-        setSyncMessage("동기화 완료");
-        alert("🎉 불러오기 완료! 클라우드 백업에서 저널 목록을 성공적으로 복원했습니다.");
-      } else {
-        setIsCloudSyncing(false);
-        setSyncStatus("error");
-        setSyncMessage("클라우드 데이터 없음");
-        alert("❌ 클라우드에 백업된 데이터가 없습니다. 먼저 [동기화 업로드]를 진행해 주세요.");
-      }
-    } catch (err) {
-      console.error("Firebase download failed:", err);
-      setIsCloudSyncing(false);
-      setSyncStatus("error");
-      setSyncMessage("동기화 실패");
-      alert("❌ 복원 중 오류가 발생했습니다: " + (err.message || err));
+      const snapshot = await getDoc(doc(db, 'saves', googleUser.uid));
+      if (!snapshot.exists() || !snapshot.data().lenormand_journals) return window.alert('클라우드 백업이 없습니다.');
+      setJournals(JSON.parse(snapshot.data().lenormand_journals));
+      setSyncStatus('synced');
+    } catch (error) {
+      setSyncStatus('error');
+      window.alert(`불러오기에 실패했습니다: ${error.message}`);
     }
   };
 
-  // Export database as JSON file
-  const exportToJson = () => {
-    const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(journals, null, 2));
-    const downloadAnchor = document.createElement('a');
-    downloadAnchor.setAttribute("href", dataStr);
-    downloadAnchor.setAttribute("download", `lenormand_journal_${new Date().toISOString().slice(0, 10)}.json`);
-    document.body.appendChild(downloadAnchor);
-    downloadAnchor.click();
-    downloadAnchor.remove();
+  const exportData = () => {
+    const href = `data:application/json;charset=utf-8,${encodeURIComponent(JSON.stringify(journals, null, 2))}`;
+    const anchor = document.createElement('a');
+    anchor.href = href;
+    anchor.download = `lenormand-journal-${new Date().toISOString().slice(0, 10)}.json`;
+    anchor.click();
   };
 
-  // Import database from JSON file
-  const importFromJson = (e) => {
-    const fileReader = new FileReader();
-    fileReader.readAsText(e.target.files[0], "UTF-8");
-    fileReader.onload = (event) => {
+  const importData = (event) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
       try {
-        const parsed = JSON.parse(event.target.result);
-        if (Array.isArray(parsed)) {
-          if (window.confirm("가져온 저널 데이터로 기존 목록을 완전히 대체하시겠습니까?")) {
-            setJournals(parsed);
-            alert("저널 데이터 가져오기에 성공했습니다!");
-          }
-        } else {
-          alert("올바른 레노먼드 저널 JSON 파일이 아닙니다.");
-        }
-      } catch (err) {
-        console.error("Import error: ", err);
-        alert("파일을 파싱하는 도중 에러가 발생했습니다.");
+        const data = JSON.parse(reader.result);
+        if (!Array.isArray(data)) throw new Error('형식 오류');
+        if (window.confirm('가져온 기록으로 현재 기록 목록을 바꿀까요?')) setJournals(data);
+      } catch {
+        window.alert('올바른 레노먼드 기록 파일이 아닙니다.');
       }
     };
+    reader.readAsText(file);
   };
 
-  // Save current session to history journal
-  const saveJournal = () => {
-    const id = Date.now().toString();
-    const timestamp = new Date().toLocaleString();
-    let newEntry = { id, timestamp, type: activeTab };
-
-    if (activeTab === 'daily') {
-      const hasCards = dailyCards.some(c => c !== null);
-      if (!hasCards && !dailyMorningNote && !dailyEveningNote) {
-        alert('저장할 내용(카드 혹은 메모)이 없습니다.');
-        return;
-      }
-      newEntry = {
-        ...newEntry,
-        date: dailyDate || new Date().toLocaleDateString(),
-        cardCount: dailyCardCount,
-        cols: dailyCols,
-        cards: dailyCards.map(c => c ? c.id : null),
-        memos: { ...dailyMemos },
-        morningNote: dailyMorningNote,
-        eveningNote: dailyEveningNote,
-        mood: dailyMood,
-        satisfaction: dailySatisfaction
-      };
-    } else {
-      const hasCards = freeCards.some(c => c !== null);
-      if (!freeQuestion && !hasCards && !freePrediction && !freeFeedback) {
-        alert('저장할 내용이 없습니다.');
-        return;
-      }
-      newEntry = {
-        ...newEntry,
-        question: freeQuestion || '무제 질문',
-        cardCount: freeCardCount,
-        cols: freeCols,
-        cards: freeCards.map(c => c ? c.id : null),
-        prediction: freePrediction,
-        feedback: freeFeedback
-      };
-    }
-
-    setJournals(prev => [newEntry, ...prev]);
-    alert('성공적으로 저장되었습니다.');
-  };
-
-  // Load past reading
-  const loadJournal = (entry) => {
-    if (!window.confirm('작성 중인 내용이 덮어씌워집니다. 불러오시겠습니까?')) return;
-    
-    setActiveTab(entry.type);
-
-    if (entry.type === 'daily') {
-      setDailyCardCount(entry.cardCount);
-      setDailyCols(entry.cardCount === 36 ? 8 : (entry.cols || entry.cardCount));
-      setDailyDate(entry.date || '');
-      setDailyCards(entry.cards.map(id => id ? LENORMAND_CARDS.find(c => c.id === id) : null));
-      setDailyMemos(entry.memos || {});
-      setDailyMorningNote(entry.morningNote || '');
-      setDailyEveningNote(entry.eveningNote || '');
-      setDailyMood(entry.mood || '');
-      setDailySatisfaction(entry.satisfaction || '');
-    } else {
-      setFreeQuestion(entry.question || '');
-      setFreeCardCount(entry.cardCount);
-      setFreeCols(entry.cardCount === 36 ? 8 : (entry.cols || entry.cardCount));
-      setFreeCards(entry.cards.map(id => id ? LENORMAND_CARDS.find(c => c.id === id) : null));
-      setFreePrediction(entry.prediction || '');
-      setFreeFeedback(entry.feedback || '');
-    }
-    setIsSidebarOpen(false);
-  };
-
-  // Delete past reading
-  const deleteJournal = (id, e) => {
-    e.stopPropagation();
-    if (!window.confirm('정말 이 기록을 삭제하시겠습니까?')) return;
-    setJournals(prev => prev.filter(j => j.id !== id));
-  };
-
-  // ==========================================
-  // React Hooks / Effects
-  // ==========================================
-
-  // Apply Theme class to body
-  useEffect(() => {
-    const body = document.body;
-    body.className = '';
-    body.classList.add(`theme-${theme}`);
-    localStorage.setItem('lenormand_theme', theme);
-  }, [theme]);
-
-  // Sync journals to LocalStorage & Auto Cloud Sync
-  useEffect(() => {
-    localStorage.setItem('lenormand_journals', JSON.stringify(journals));
-    const now = new Date().toISOString();
-    localStorage.setItem('lenormand_updated_at', now);
-    
-    if (isAutoSync && googleUser && !googleUser.isDemo && db) {
-      const docRef = doc(db, 'saves', googleUser.uid);
-      setSyncStatus("syncing");
-      setDoc(docRef, {
-        lenormand_journals: JSON.stringify(journals),
-        lenormand_updatedAt: now
-      }, { merge: true })
-      .then(() => {
-        const nowStr = new Date(now).toLocaleString();
-        setLastSyncedTime(nowStr);
-        localStorage.setItem('last_synced_time', nowStr);
-        setSyncStatus("synced");
-      })
-      .catch((err) => {
-        console.error("Auto sync failed:", err);
-        setSyncStatus("error");
-      });
-    }
-  }, [journals, isAutoSync, googleUser]);
-
-  // Save googleUser to LocalStorage
-  useEffect(() => {
-    if (googleUser) {
-      localStorage.setItem('google_user', JSON.stringify(googleUser));
-    } else {
-      localStorage.removeItem('google_user');
-    }
-  }, [googleUser]);
-
-  // Save isAutoSync to LocalStorage
-  useEffect(() => {
-    localStorage.setItem('is_auto_sync', isAutoSync);
-  }, [isAutoSync]);
-
-  // Refs to avoid hook dependency loop inside real-time listener
-  const journalsRef = useRef(journals);
-  useEffect(() => {
-    journalsRef.current = journals;
-  }, [journals]);
-
-  // Firebase Real-time Sync Listener
-  useEffect(() => {
-    if (!googleUser || googleUser.isDemo || !db) return;
-    
-    const docRef = doc(db, 'saves', googleUser.uid);
-    setSyncStatus("syncing");
-    setSyncMessage("동기화 확인 중...");
-
-    const unsubscribe = onSnapshot(docRef, (docSnap) => {
-      if (docSnap.exists()) {
-        const data = docSnap.data();
-        const serverUpdatedAt = data.lenormand_updatedAt || "";
-        const localUpdatedAt = localStorage.getItem('lenormand_updated_at') || "";
-
-        const hasLocalData = !!localStorage.getItem('lenormand_journals');
-        const shouldDownload = !hasLocalData || (serverUpdatedAt && serverUpdatedAt > localUpdatedAt);
-        const shouldUpload = hasLocalData && (!serverUpdatedAt || localUpdatedAt > serverUpdatedAt);
-
-        if (shouldDownload) {
-          try {
-            if (data.lenormand_journals) {
-              const parsed = JSON.parse(data.lenormand_journals);
-              setJournals(parsed || []);
-              localStorage.setItem('lenormand_journals', data.lenormand_journals);
-            }
-            if (serverUpdatedAt) {
-              localStorage.setItem('lenormand_updated_at', serverUpdatedAt);
-              const nowStr = new Date(serverUpdatedAt).toLocaleString();
-              setLastSyncedTime(nowStr);
-              localStorage.setItem('last_synced_time', nowStr);
-            }
-            setSyncStatus("synced");
-            setSyncMessage("클라우드 데이터를 성공적으로 불러왔습니다.");
-          } catch (e) {
-            console.error("Failed to parse synced state", e);
-            setSyncStatus("error");
-            setSyncMessage("클라우드 데이터 분석 실패");
-          }
-        } else if (shouldUpload) {
-          const localJournals = localStorage.getItem('lenormand_journals') || JSON.stringify(journalsRef.current);
-          const uploadTime = localUpdatedAt || new Date().toISOString();
-          
-          setDoc(docRef, {
-            lenormand_journals: localJournals,
-            lenormand_updatedAt: uploadTime
-          }, { merge: true })
-          .then(() => {
-            localStorage.setItem('lenormand_updated_at', uploadTime);
-            const nowStr = new Date(uploadTime).toLocaleString();
-            setLastSyncedTime(nowStr);
-            localStorage.setItem('last_synced_time', nowStr);
-            setSyncStatus("synced");
-            setSyncMessage("로컬 데이터를 클라우드에 백업했습니다.");
-          })
-          .catch((err) => {
-            console.error("Firebase sync upload failed:", err);
-            setSyncStatus("error");
-            setSyncMessage("백업 업로드 실패");
-          });
-        } else {
-          setSyncStatus("synced");
-          setSyncMessage("최신 상태입니다.");
-        }
-      } else {
-        const localJournals = localStorage.getItem('lenormand_journals') || JSON.stringify(journalsRef.current);
-        const uploadTime = localStorage.getItem('lenormand_updated_at') || new Date().toISOString();
-        
-        setDoc(docRef, {
-          lenormand_journals: localJournals,
-          lenormand_updatedAt: uploadTime
-        }, { merge: true })
-        .then(() => {
-          localStorage.setItem('lenormand_updated_at', uploadTime);
-          const nowStr = new Date(uploadTime).toLocaleString();
-          setLastSyncedTime(nowStr);
-          localStorage.setItem('last_synced_time', nowStr);
-          setSyncStatus("synced");
-          setSyncMessage("초기 클라우드 동기화 완료.");
-        })
-        .catch((err) => {
-          console.error("Firebase initial upload failed:", err);
-          setSyncStatus("error");
-          setSyncMessage("초기 동기화 업로드 실패");
-        });
-      }
-    }, (error) => {
-      console.error("Firebase sync error:", error);
-      setSyncStatus("error");
-      setSyncMessage("동기화 연결 오류");
-    });
-    return () => unsubscribe();
-  }, [googleUser]);
-
-  // Shuffle and Random Draw visual handler
-  const triggerShuffleDaily = () => {
-    if (isShufflingDaily) return;
-    setIsShufflingDaily(true);
-    let count = 0;
-    const interval = setInterval(() => {
-      setDailyCards(Array(dailyCardCount).fill(null).map(() => LENORMAND_CARDS[Math.floor(Math.random() * 36)]));
-      count++;
-      if (count > 8) {
-        clearInterval(interval);
-        const shuffled = [...LENORMAND_CARDS].sort(() => 0.5 - Math.random());
-        setDailyCards(shuffled.slice(0, dailyCardCount));
-        setIsShufflingDaily(false);
-      }
-    }, 80);
-  };
-
-  const triggerShuffleFree = () => {
-    if (isShufflingFree) return;
-    setIsShufflingFree(true);
-    let count = 0;
-    const interval = setInterval(() => {
-      setFreeCards(Array(freeCardCount).fill(null).map(() => LENORMAND_CARDS[Math.floor(Math.random() * 36)]));
-      count++;
-      if (count > 8) {
-        clearInterval(interval);
-        const shuffled = [...LENORMAND_CARDS].sort(() => 0.5 - Math.random());
-        setFreeCards(shuffled.slice(0, freeCardCount));
-        setIsShufflingFree(false);
-      }
-    }, 80);
-  };
-
-  // Adjust daily card count
-  const handleDailyCardCountChange = (count) => {
-    setDailyCardCount(count);
-    if (count === 36) {
-      setDailyCols(8);
-    } else {
-      setDailyCols(count);
-    }
-
-    setDailyCards(prev => {
-      const copy = [...prev];
-      if (copy.length < count) {
-        return [...copy, ...Array(count - copy.length).fill(null)];
-      } else if (copy.length > count) {
-        return copy.slice(0, count);
-      }
-      return copy;
-    });
-  };
-
-  // Adjust free card count
-  const handleFreeCardCountChange = (count) => {
-    setFreeCardCount(count);
-    if (count === 36) {
-      setFreeCols(8);
-    } else {
-      setFreeCols(count);
-    }
-
-    setFreeCards(prev => {
-      const copy = [...prev];
-      if (copy.length < count) {
-        return [...copy, ...Array(count - copy.length).fill(null)];
-      } else if (copy.length > count) {
-        return copy.slice(0, count);
-      }
-      return copy;
-    });
-  };
-
-  // Filtered Journals for sidebar history
-  const filteredJournals = useMemo(() => {
-    return journals.filter(entry => {
-      if (historyTypeFilter !== 'all' && entry.type !== historyTypeFilter) {
-        return false;
-      }
-
-      const term = historySearch.trim().toLowerCase();
-      if (!term) return true;
-
-      if (entry.date && entry.date.toLowerCase().includes(term)) return true;
-      if (entry.question && entry.question.toLowerCase().includes(term)) return true;
-      if (entry.morningNote && entry.morningNote.toLowerCase().includes(term)) return true;
-      if (entry.eveningNote && entry.eveningNote.toLowerCase().includes(term)) return true;
-      if (entry.prediction && entry.prediction.toLowerCase().includes(term)) return true;
-      if (entry.feedback && entry.feedback.toLowerCase().includes(term)) return true;
-
-      const cardList = entry.cards.map(id => id ? LENORMAND_CARDS.find(c => c.id === id) : null);
-      for (const card of cardList) {
-        if (!card) continue;
-        if (card.nameKo.toLowerCase().includes(term)) return true;
-        if (card.nameEn.toLowerCase().includes(term)) return true;
-        if (card.keywords.toLowerCase().includes(term)) return true;
-      }
-
-      return false;
-    });
-  }, [journals, historySearch, historyTypeFilter]);
-
-  // Chunked Daily and Free cards
-  const dailyRows = chunkCards(dailyCards, dailyCols);
-  const freeRows = chunkCards(freeCards, freeCols);
-
-  // Adjacent Card Pairing Interpreter UI
-  const renderPairingInterpreter = (cards) => {
-    const filledCards = cards.filter(c => c !== null);
-    if (filledCards.length < 2) return null;
-
-    const pairs = [];
-    for (let i = 0; i < filledCards.length - 1; i++) {
-      const c1 = filledCards[i];
-      const c2 = filledCards[i + 1];
-      const explanation = getLenormandCombo(c1, c2);
-      pairs.push({ c1, c2, explanation });
-    }
-
-    return (
-      <div 
-        className="vintage-panel" 
-        style={{ 
-          marginTop: '24px', 
-          backgroundColor: 'var(--panel-bg-alt)', 
-          border: '1px solid var(--border-color)',
-          padding: '20px 24px',
-          width: '100%'
-        }}
-      >
-        <h4 className="serif-font" style={{ fontSize: '16px', color: 'var(--text-gold)', marginBottom: '16px', display: 'flex', alignItems: 'center', gap: '8px', borderBottom: '1px solid rgba(223,183,108,0.2)', paddingBottom: '8px', letterSpacing: '-0.01em' }}>
-          <Sparkles size={16} />
-          💡 레노먼드 조합 해석 어시스턴트 (Adjacent Card Pairings)
-        </h4>
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
-          {pairs.map((p, idx) => (
-            <div key={idx} style={{ display: 'flex', flexDirection: 'column', gap: '6px', borderBottom: idx < pairs.length - 1 ? '1px dashed rgba(223,183,108,0.1)' : 'none', paddingBottom: idx < pairs.length - 1 ? '14px' : 0 }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '14px', fontWeight: 'bold', color: 'var(--text-primary)' }}>
-                <span style={{ color: 'var(--text-gold)' }}>[슬롯 {cards.indexOf(p.c1) + 1} + 슬롯 {cards.indexOf(p.c2) + 1}]</span>
-                <span>{p.c1.nameKo} ({p.c1.nameEn}) × {p.c2.nameKo} ({p.c2.nameEn})</span>
-              </div>
-              <p style={{ 
-                fontSize: '14px', 
-                color: 'var(--text-secondary)', 
-                lineHeight: '1.6', 
-                margin: 0,
-                whiteSpace: 'pre-wrap',
-                wordBreak: 'keep-all'
-              }}>
-                {p.explanation}
-              </p>
-            </div>
-          ))}
-        </div>
-      </div>
-    );
-  };
-
-  const currentCard = activeSlotIndex !== null
-    ? (activeTab === 'daily' ? dailyCards[activeSlotIndex] : freeCards[activeSlotIndex])
-    : null;
-  const activeCardId = currentCard ? currentCard.id : null;
+  const morningMode = dailyPeriod === 'morning';
 
   return (
-    <div style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column', position: 'relative' }}>
-      
-      {/* Cloud Sync Overlay loading spinner */}
-      {isCloudSyncing && (
-        <div style={{
-          position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
-          backgroundColor: 'rgba(0,0,0,0.8)', zIndex: 2000,
-          display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
-          backdropFilter: 'blur(5px)', gap: '20px'
-        }}>
-          <div className="loader-spinner" style={{
-            border: '4px solid var(--panel-bg-alt)',
-            borderTop: '4px solid var(--border-color)',
-            borderRadius: '50%',
-            width: '50px',
-            height: '50px',
-            animation: 'spin 1s linear infinite'
-          }} />
-          <style>{`
-            @keyframes spin {
-              0% { transform: rotate(0deg); }
-              100% { transform: rotate(360deg); }
-            }
-          `}</style>
-          <span className="serif-font" style={{ fontSize: '18px', color: 'var(--text-gold)' }}>
-            구글 클라우드 동기화 중...
-          </span>
-          <span style={{ fontSize: '14px', color: 'var(--text-secondary)' }}>
-            보안 채널을 통해 저널 데이터를 암호화하여 업로드/다운로드하고 있습니다.
-          </span>
-        </div>
-      )}
-
-      {/* Header Bar */}
-      <header style={{
-        borderBottom: '1px solid var(--border-color)',
-        padding: '16px 24px',
-        backgroundColor: 'var(--panel-bg)',
-        display: 'flex',
-        justifyContent: 'space-between',
-        alignItems: 'center',
-        flexWrap: 'wrap',
-        gap: '16px',
-        boxShadow: '0 4px 10px rgba(0,0,0,0.1)'
-      }}>
-        {/* Logo and Info */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: '15px' }}>
-          <BookMarked size={28} style={{ color: 'var(--text-gold)' }} />
+    <div className={isHistoryOpen ? 'app-shell history-open' : 'app-shell'}>
+      <header className="site-header">
+        <div className="brand-block">
+          <div className="brand-seal"><BookMarked size={25} /></div>
           <div>
-            <h1 style={{ fontSize: '20px', color: 'var(--text-gold)', fontWeight: 800, margin: 0 }}>
-              LENORMAND JOURNAL
-            </h1>
-            <p style={{ fontSize: '13px', color: 'var(--text-secondary)', margin: 0 }}>
-              레노먼드 오라클 카드 기록장 & 클라우드
-            </p>
+            <span className="brand-kicker">AD QUAERENDUM · 기록하고 다시 묻기</span>
+            <h1>Lenormand Journal</h1>
           </div>
         </div>
-
-        {/* Action Controls & Theme Toggle */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
-          
-          {/* Theme Selector */}
-          <div style={{ display: 'flex', alignItems: 'center', backgroundColor: 'var(--panel-bg-alt)', padding: '4px', borderRadius: '8px', border: '1px solid var(--border-color)' }}>
-            <button
-              onClick={() => setTheme('blue-owl')}
-              style={{
-                background: theme === 'blue-owl' ? 'var(--btn-bg)' : 'none',
-                color: theme === 'blue-owl' ? 'var(--btn-text)' : 'var(--text-secondary)',
-                border: 'none',
-                padding: '6px 12px',
-                borderRadius: '6px',
-                cursor: 'pointer',
-                fontSize: '13px',
-                fontWeight: 'bold',
-                display: 'flex',
-                alignItems: 'center',
-                gap: '4px',
-                transition: 'all 0.2s'
-              }}
-            >
-              <Moon size={13} />
-              Midnight
-            </button>
-            <button
-              onClick={() => setTheme('red-owl')}
-              style={{
-                background: theme === 'red-owl' ? 'var(--btn-bg)' : 'none',
-                color: theme === 'red-owl' ? 'var(--btn-text)' : 'var(--text-secondary)',
-                border: 'none',
-                padding: '6px 12px',
-                borderRadius: '6px',
-                cursor: 'pointer',
-                fontSize: '13px',
-                fontWeight: 'bold',
-                display: 'flex',
-                alignItems: 'center',
-                gap: '4px',
-                transition: 'all 0.2s'
-              }}
-            >
-              <Sparkles size={13} />
-              Minimal Zinc
-            </button>
-            <button
-              onClick={() => setTheme('classic-cream')}
-              style={{
-                background: theme === 'classic-cream' ? 'var(--btn-bg)' : 'none',
-                color: theme === 'classic-cream' ? 'var(--btn-text)' : 'var(--text-secondary)',
-                border: 'none',
-                padding: '6px 12px',
-                borderRadius: '6px',
-                cursor: 'pointer',
-                fontSize: '13px',
-                fontWeight: 'bold',
-                display: 'flex',
-                alignItems: 'center',
-                gap: '4px',
-                transition: 'all 0.2s'
-              }}
-            >
-              <Compass size={13} />
-              Mystic Forest
-            </button>
-          </div>
-
-          {/* Google Auth Status & Cloud Sync Block */}
-          {googleUser ? (
-            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-              {/* Cloud Sync Status Badge */}
-              <div style={{ 
-                fontSize: '12px', 
-                backgroundColor: 'rgba(74, 115, 88, 0.08)', 
-                border: '1px solid rgba(74, 115, 88, 0.2)', 
-                padding: '6px 12px', 
-                borderRadius: '10px', 
-                color: 'var(--text-primary)', 
-                fontWeight: 700,
-                display: 'inline-flex',
-                alignItems: 'center',
-                gap: '6px',
-                userSelect: 'none',
-                height: '36px'
-              }}>
-                <span 
-                  style={{ 
-                    color: syncStatus === 'error' ? '#f87171' : syncStatus === 'syncing' ? '#e67e22' : '#27ae60', 
-                    fontSize: '14px',
-                    lineHeight: 1
-                  }}
-                >
-                  {syncStatus === 'syncing' ? '⏳' : '●'}
-                </span>
-                <span>CLOUD SYNC ({googleUser.name})</span>
-              </div>
-
-              {/* Upload Button */}
-              <button 
-                onClick={syncToCloud}
-                style={{ 
-                  padding: '6px 14px', 
-                  fontSize: '12px', 
-                  borderRadius: '10px', 
-                  cursor: 'pointer', 
-                  color: '#ffffff', 
-                  background: 'linear-gradient(135deg, #154734 0%, #0a2217 100%)',
-                  border: '1.5px solid rgba(223, 183, 108, 0.4)',
-                  fontWeight: 700,
-                  display: 'inline-flex',
-                  alignItems: 'center',
-                  gap: '4px',
-                  height: '36px'
-                }}
-                title="로컬 데이터를 클라우드에 강제로 업로드(덮어쓰기)"
-              >
-                📤 올리기
-              </button>
-
-              {/* Restore Button */}
-              <button 
-                onClick={restoreFromCloud}
-                style={{ 
-                  padding: '6px 14px', 
-                  fontSize: '12px', 
-                  border: '1px solid var(--border-color)', 
-                  borderRadius: '10px', 
-                  cursor: 'pointer', 
-                  color: 'var(--text-gold)', 
-                  background: 'var(--panel-bg-alt)', 
-                  fontWeight: 700,
-                  display: 'inline-flex',
-                  alignItems: 'center',
-                  gap: '4px',
-                  height: '36px'
-                }}
-                title="클라우드 데이터를 브라우저에 강제로 다운로드(복원)"
-              >
-                📥 가져오기
-              </button>
-
-              {/* Logout Button */}
-              <button 
-                onClick={handleLogOut}
-                style={{ 
-                  padding: '6px 14px', 
-                  fontSize: '12px', 
-                  border: '1px solid rgba(248, 113, 113, 0.25)', 
-                  borderRadius: '10px', 
-                  cursor: 'pointer', 
-                  color: '#f87171', 
-                  background: 'rgba(248, 113, 113, 0.05)', 
-                  fontWeight: 700,
-                  height: '36px'
-                }}
-              >
-                로그아웃
-              </button>
-            </div>
-          ) : (
-            <button 
-              className="gold-button"
-              style={{ height: '36px', padding: '0 14px', fontSize: '12px', borderRadius: '10px' }}
-              onClick={handleGoogleLogin}
-            >
-              🔑 구글 로그인 연동
-            </button>
-          )}
-
-          {/* Settings cog */}
-          <button 
-            className="gold-button-outline"
-            style={{ height: '36px', width: '36px', padding: 0 }}
-            onClick={() => setIsSettingsOpen(true)}
-            title="설정 및 백업 관리"
-          >
-            <Settings size={16} />
+        <div className="header-actions">
+          <button className="paper-button" type="button" onClick={() => setIsSettingsOpen(true)}><Settings size={15} /> 설정</button>
+          <button className={isHistoryOpen ? 'ink-button active' : 'ink-button'} type="button" onClick={() => setIsHistoryOpen((open) => !open)} data-testid="history-toggle">
+            <History size={16} /> 과거 기록 {journals.length}
           </button>
-
-          {/* History Sidebar Button */}
-          <button 
-            className="gold-button-outline"
-            style={{ padding: '8px 16px', fontSize: '13px', height: '36px' }}
-            onClick={() => setIsSidebarOpen(true)}
-          >
-            <History size={16} />
-            과거 리딩 기록 ({journals.length})
-          </button>
-
-          {/* Clear Workspace button */}
-          <button 
-            className="gold-button-outline"
-            style={{ padding: '8px 16px', fontSize: '13px', height: '36px', borderColor: '#ef4444', color: '#f87171' }}
-            onClick={clearWorkspace}
-          >
-            초기화
-          </button>
+          <button className="paper-button danger-text" type="button" onClick={clearWorkspace}>작업창 비우기</button>
         </div>
       </header>
 
-      {/* Main Content Area */}
-      <main style={{ flex: 1, padding: '40px 20px', maxWidth: '1400px', width: '100%', margin: '0 auto' }}>
-        
-        {/* Cloud Sync Status Text */}
-        {googleUser && (
-          <div style={{
-            backgroundColor: 'var(--panel-bg)',
-            border: '1px solid var(--border-color)',
-            padding: '12px 20px',
-            borderRadius: '6px',
-            marginBottom: '24px',
-            display: 'flex',
-            justifyContent: 'space-between',
-            alignItems: 'center',
-            fontSize: '13px',
-            flexWrap: 'wrap',
-            gap: '12px'
-          }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-              <Cloud size={16} style={{ color: 'var(--text-gold)' }} />
-              <span>
-                구글 클라우드 연동 활성화됨: <b>{googleUser.email}</b> 
-                {lastSyncedTime ? ` (최근 동기화: ${lastSyncedTime})` : ' (아직 클라우드 백업이 없습니다)'}
-              </span>
-            </div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
-              <label style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', cursor: 'pointer' }}>
-                <input 
-                  type="checkbox" 
-                  checked={isAutoSync} 
-                  onChange={(e) => setIsAutoSync(e.target.checked)}
-                  style={{ cursor: 'pointer' }}
-                />
-                자동 동기화 (저장 시 자동 업로드)
-              </label>
-              <button 
-                className="gold-button" 
-                style={{ padding: '4px 12px', fontSize: '12px', height: '28px' }}
-                onClick={syncToCloud}
-              >
-                지금 동기화
-              </button>
-            </div>
+      <main className="main-content">
+        <section className="hero-intro">
+          <div className="hero-mark">✦</div>
+          <div>
+            <span className="eyebrow">A PRIVATE ARCHIVE OF SIGNS</span>
+            <h2>카드를 뽑고, 삶에서 되풀이되는 상징을 기록하세요.</h2>
+            <p>오늘의 해석과 과거의 같은 카드를 한 화면에서 나란히 읽는 개인 레노먼드 아카이브.</p>
           </div>
-        )}
+        </section>
 
-        {/* Navigation Tabs */}
-        <div style={{ 
-          display: 'flex', 
-          justifyContent: 'center', 
-          marginBottom: '36px',
-          borderBottom: '2px solid var(--panel-bg-alt)' 
-        }}>
-          <button
-            onClick={() => setActiveTab('daily')}
-            style={{
-              background: 'none',
-              border: 'none',
-              borderBottom: activeTab === 'daily' ? '3px solid var(--border-color)' : '3px solid transparent',
-              color: activeTab === 'daily' ? 'var(--text-gold)' : 'var(--text-secondary)',
-              padding: '12px 24px',
-              fontSize: '18px',
-              fontWeight: 700,
-              cursor: 'pointer',
-              transition: 'all 0.2s'
-            }}
-          >
-            데일리 레노먼드 리딩
+        <nav className="reading-tabs" aria-label="리딩 종류">
+          <button type="button" className={activeTab === 'daily' ? 'active' : ''} onClick={() => setActiveTab('daily')}>
+            <span>01</span><strong>Daily Reading</strong><small>데일리 리딩</small>
           </button>
-          <button
-            onClick={() => setActiveTab('free')}
-            style={{
-              background: 'none',
-              border: 'none',
-              borderBottom: activeTab === 'free' ? '3px solid var(--border-color)' : '3px solid transparent',
-              color: activeTab === 'free' ? 'var(--text-gold)' : 'var(--text-secondary)',
-              padding: '12px 24px',
-              fontSize: '18px',
-              fontWeight: 700,
-              cursor: 'pointer',
-              transition: 'all 0.2s'
-            }}
-          >
-            프리 리딩
+          <button type="button" className={activeTab === 'free' ? 'active' : ''} onClick={() => setActiveTab('free')}>
+            <span>02</span><strong>Free Reading</strong><small>프리 리딩</small>
           </button>
-        </div>
+        </nav>
 
-        {/* TAB 1: DAILY READING */}
-        {activeTab === 'daily' && (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '30px' }}>
-            
-            {/* Card Layout Section */}
-            <div className="double-border">
-              <div className="double-border-inner" style={{ padding: '30px 20px' }}>
-                
-                {/* Configuration Controls Bar */}
-                <div style={{ 
-                  display: 'flex', 
-                  justifyContent: 'space-between', 
-                  alignItems: 'center', 
-                  marginBottom: '24px', 
-                  flexWrap: 'wrap', 
-                  gap: '16px',
-                  borderBottom: '1px solid rgba(223, 183, 108, 0.2)',
-                  paddingBottom: '16px'
-                }}>
-                  <h3 style={{ fontSize: '18px', color: 'var(--text-gold)', display: 'flex', alignItems: 'center', gap: '8px' }}>
-                    <Layers size={18} />
-                    스프레드 카드 및 포메이션 설정
-                  </h3>
-                  
-                  <div style={{ display: 'flex', gap: '20px', flexWrap: 'wrap', alignItems: 'center' }}>
-                    
-                    {/* Total Cards Selector */}
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                      <span style={{ fontSize: '15px', color: 'var(--text-secondary)' }}>총 카드 수:</span>
-                      <select
-                        className="parchment-input"
-                        style={{ height: '36px', padding: '0 12px', width: '180px', fontSize: '14px', fontWeight: 'bold' }}
-                        value={dailyCardCount}
-                        onChange={(e) => handleDailyCardCountChange(parseInt(e.target.value))}
-                      >
-                        {[1, 2, 3, 4, 5, 6, 7, 8, 9].map(n => (
-                          <option key={n} value={n}>{n}장</option>
-                        ))}
-                        <option value={36}>Grand Tableau (36장)</option>
-                      </select>
-                    </div>
-
-                    {/* Columns Selector */}
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                      <span style={{ fontSize: '15px', color: 'var(--text-secondary)' }}>한 줄당 카드 수:</span>
-                      <div style={{ display: 'flex', alignItems: 'center', border: '1px solid var(--border-color)', borderRadius: '4px', overflow: 'hidden' }}>
-                        <button 
-                          onClick={() => setDailyCols(prev => Math.max(1, prev - 1))}
-                          style={{ background: 'var(--panel-bg-alt)', border: 'none', color: 'var(--text-primary)', padding: '6px 10px', cursor: 'pointer' }}
-                          disabled={dailyCols <= 1}
-                        >
-                          <Minus size={14} />
-                        </button>
-                        <span style={{ padding: '0 14px', fontWeight: 'bold', fontSize: '14px', color: 'var(--text-gold)', minWidth: '30px', textAlign: 'center' }}>
-                          {dailyCols}
-                        </span>
-                        <button 
-                          onClick={() => setDailyCols(prev => Math.min(12, prev + 1))}
-                          style={{ background: 'var(--panel-bg-alt)', border: 'none', color: 'var(--text-primary)', padding: '6px 10px', cursor: 'pointer' }}
-                          disabled={dailyCols >= 12}
-                        >
-                          <Plus size={14} />
-                        </button>
-                      </div>
-                    </div>
-
-                    {/* Shuffle & Random Draw Button */}
-                    <button
-                      className="gold-button"
-                      onClick={triggerShuffleDaily}
-                      disabled={isShufflingDaily}
-                      style={{ height: '36px', padding: '0 16px', fontSize: '13px' }}
-                    >
-                      <Sparkles size={14} className={isShufflingDaily ? "animate-spin" : ""} />
-                      {isShufflingDaily ? "셔플 중..." : "🃏 셔플 & 무작위 뽑기"}
-                    </button>
-
-                  </div>
-                </div>
-
-                {/* Helper info on active Grid alignment */}
-                <div style={{ 
-                  fontSize: '14px', 
-                  color: 'var(--text-secondary)', 
-                  marginBottom: '16px', 
-                  display: 'flex', 
-                  alignItems: 'center', 
-                  gap: '6px',
-                  justifyContent: 'center'
-                }}>
-                  <Grid size={14} style={{ color: 'var(--text-gold)' }} />
-                  <span>
-                    {dailyCardCount === 36
-                      ? <span>포메이션 정보: 총 <b>36</b>장의 카드가 그랜드 테블루 <b>(8x4 + 4)</b> 형태로 가운데 정렬 배치됩니다.</span>
-                      : <span>포메이션 정보: 총 <b>{dailyCardCount}</b>장의 카드가 가로 <b>{dailyCols}</b>개씩 <b>{Math.ceil(dailyCardCount / dailyCols)}</b>줄로 가운데 정렬 배치됩니다.</span>
-                    }
-                  </span>
-                </div>
-
-                {/* Grid of Card Slots */}
-                <div className={`cards-row-container ${dailyCardCount === 36 ? 'grand-tableau-grid' : ''}`} style={{ padding: '30px 10px' }}>
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '20px', alignItems: 'center', width: '100%' }}>
-                    {dailyRows.map((rowCards, rowIndex) => (
-                      <div 
-                        key={rowIndex} 
-                        className="cards-grid" 
-                        style={{ 
-                          display: 'flex', 
-                          justifyContent: 'center', 
-                          gap: '20px', 
-                          flexWrap: 'wrap', 
-                          width: '100%' 
-                        }}
-                      >
-                        {rowCards.map((card, colIndex) => {
-                          const globalIndex = rowIndex * dailyCols + colIndex;
-                          return (
-                            <CardSlot 
-                              key={globalIndex}
-                              card={card}
-                              index={globalIndex}
-                              onSelect={(emptyCard) => {
-                                if (emptyCard === null) {
-                                  setDailyCards(prev => {
-                                    const copy = [...prev];
-                                    copy[globalIndex] = null;
-                                    return copy;
-                                  });
-                                  setDailyMemos(prev => {
-                                    const copy = { ...prev };
-                                    delete copy[globalIndex];
-                                    return copy;
-                                  });
-                                } else {
-                                  openCardSelectModal(globalIndex);
-                                }
-                              }}
-                            />
-                          );
-                        })}
-                      </div>
-                    ))}
-                  </div>
-                </div>
-
-                {/* Card pairings assistant */}
-                {renderPairingInterpreter(dailyCards)}
-
+        {activeTab === 'daily' ? (
+          <div className="workspace-stack" data-testid="daily-workspace">
+            <section className="period-switch ink-panel">
+              <div>
+                <span className="eyebrow">WHEN ARE YOU READING?</span>
+                <h2>이 리딩을 언제 보고 있나요?</h2>
+                <p>시간대를 고르면 하루 기록의 질문과 순서가 자연스럽게 바뀝니다.</p>
               </div>
-            </div>
-
-            {/* Date-Time stamp section */}
-            <div className="vintage-panel" style={{ display: 'flex', alignItems: 'center', gap: '16px', flexWrap: 'wrap', padding: '16px 24px' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', color: 'var(--text-gold)' }}>
-                <Calendar size={18} />
-                <span className="serif-font" style={{ fontWeight: 'bold', fontSize: '14px' }}>리딩 날짜 & 시간:</span>
-              </div>
-              <div style={{ display: 'flex', gap: '12px', flex: 1, minWidth: '240px' }}>
-                <input 
-                  type="text" 
-                  className="parchment-input" 
-                  style={{ height: '36px', padding: '0 12px' }}
-                  placeholder="예: 2026-05-24 13:00 (우측 스탬프를 눌러 입력 가능)"
-                  value={dailyDate}
-                  onChange={(e) => setDailyDate(e.target.value)}
-                />
-                <button className="gold-button" style={{ height: '36px', padding: '0 20px', whiteSpace: 'nowrap' }} onClick={punchTime}>
-                  <Clock size={15} />
-                  스탬프 찍기
+              <div className="period-options">
+                <button type="button" className={morningMode ? 'active' : ''} onClick={() => setDailyPeriod('morning')} data-testid="period-morning">
+                  <Sun size={20} /><strong>아침에</strong><span>오늘의 흐름을 먼저 읽어요</span>
+                </button>
+                <button type="button" className={!morningMode ? 'active' : ''} onClick={() => setDailyPeriod('night')} data-testid="period-night">
+                  <Moon size={20} /><strong>자기 전에</strong><span>지나온 하루와 카드를 맞춰봐요</span>
                 </button>
               </div>
-            </div>
+            </section>
 
-            {/* Symbol & Keyword Memos Section */}
-            <div className="vintage-panel">
-              <h2 className="serif-font" style={{ fontSize: '18px', color: 'var(--text-gold)', marginBottom: '20px', borderBottom: '1px solid var(--border-color)', paddingBottom: '8px', display: 'flex', alignItems: 'center', gap: '8px' }}>
-                <Sparkles size={18} />
-                &lt;상징 및 키워드 메모&gt;
-              </h2>
-              
-              {!dailyCards.some(c => c !== null) ? (
-                <div style={{ textAlign: 'center', padding: '30px 0', color: 'var(--text-secondary)', fontSize: '14px' }}>
-                  위 슬롯에서 카드를 선택하면 해당 카드의 상징과 키워드를 적을 수 있는 입력창이 나타납니다.
-                </div>
-              ) : (
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
-                  {dailyCards.map((card, idx) => {
-                    if (!card) return null;
-                    return (
-                      <div 
-                        key={idx}
-                        style={{
-                          backgroundColor: 'var(--panel-bg-alt)',
-                          border: '1px solid var(--border-color)',
-                          borderRadius: '6px',
-                          padding: '16px',
-                          display: 'flex',
-                          alignItems: 'center',
-                          gap: '20px',
-                          flexWrap: 'wrap'
-                        }}
-                      >
-                        {/* Mini image preview */}
-                        <div style={{ width: '50px', aspectRatio: '1/1.55', border: '1px solid var(--border-color)', borderRadius: '4px', overflow: 'hidden' }}>
-                          <img src={card.imgUrl} alt={card.nameEn} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
-                        </div>
+            <section className="date-strip">
+              <Calendar size={17} />
+              <label htmlFor="reading-date">리딩 날짜와 시간</label>
+              <input id="reading-date" value={dailyDate} onChange={(event) => setDailyDate(event.target.value)} placeholder="날짜와 시간을 적어주세요" />
+              <button className="paper-button" type="button" onClick={stampTime}><Clock size={14} /> 지금</button>
+            </section>
 
-                        {/* Text fields */}
-                        <div style={{ flex: 1, minWidth: '240px', display: 'flex', flexDirection: 'column', gap: '4px' }}>
-                          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                            <span style={{ fontSize: '14px', color: 'var(--text-gold)', fontWeight: 'bold' }}>슬롯 {idx + 1}</span>
-                            <span className="serif-font" style={{ fontSize: '17px', fontWeight: 'bold', color: 'var(--text-primary)' }}>
-                              {card.id}. {card.nameEn} ({card.nameKo})
-                            </span>
-                          </div>
+            <RowLayoutEditor
+              rows={dailyRows}
+              setRows={setDailyRows}
+              cards={dailyCards}
+              setCards={setDailyCards}
+              onOpenCard={openCard}
+              onClearCard={(index) => clearCard(index, 'daily')}
+              onShuffle={() => shuffle('daily')}
+              isShuffling={isShufflingDaily}
+            />
+            <CardKeywordNotes cards={dailyCards} memos={dailyMemos} setMemos={setDailyMemos} />
+            <PairingNotes cards={dailyCards} items={dailyCombinations} setItems={setDailyCombinations} />
 
-                          {/* Recommended Keywords */}
-                          <div style={{ 
-                            fontSize: '13px', 
-                            color: 'var(--text-secondary)', 
-                            opacity: 0.6, 
-                            fontStyle: 'italic',
-                            display: 'flex',
-                            alignItems: 'center',
-                            gap: '4px'
-                          }}>
-                            <Info size={14} />
-                            추천 상징: {card.keywords}
-                          </div>
-
-                          {/* User custom selected keyword */}
-                          <div style={{ marginTop: '8px' }}>
-                            <input
-                              type="text"
-                              className="parchment-input"
-                              style={{ 
-                                fontSize: '18px', 
-                                fontWeight: 'bold', 
-                                color: 'var(--text-gold)', 
-                                borderStyle: 'none', 
-                                borderBottom: '1px dashed var(--border-color)',
-                                borderRadius: 0,
-                                padding: '4px 0',
-                                backgroundColor: 'transparent'
-                              }}
-                              placeholder="나만의 리딩 키워드 적기..."
-                              value={dailyMemos[idx] || ''}
-                              onChange={(e) => updateDailyMemo(idx, e.target.value)}
-                            />
-                          </div>
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              )}
-            </div>
-
-            {/* Daily Journal (Morning / Evening Notes) */}
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: '24px' }}>
-              
-              {/* Morning Note */}
-              <div className="double-border">
-                <div className="double-border-inner" style={{ padding: '20px' }}>
-                  <h3 className="serif-font" style={{ fontSize: '16px', color: 'var(--text-gold)', marginBottom: '14px', borderBottom: '1px solid var(--border-color)', paddingBottom: '6px' }}>
-                    일어나서 (Morning Predict)
-                  </h3>
-                  <p style={{ fontSize: '12px', color: 'var(--text-secondary)', marginBottom: '10px' }}>
-                    아침에 뽑은 카드들을 확인하고, 오늘 하루 일어날 예측과 스스로 정한 키워드들을 기록해 보세요.
-                  </p>
-                  <textarea
-                    className="parchment-input"
-                    placeholder="오늘 하루는 어떨지, 카드 키워드를 연계해서 상상해 보세요..."
-                    value={dailyMorningNote}
-                    onChange={(e) => setDailyMorningNote(e.target.value)}
+            <section className="daily-notes-grid">
+              <article className="ink-panel note-panel">
+                <span className="eyebrow">{morningMode ? 'MORNING FORECAST' : 'THE DAY REMEMBERED'}</span>
+                <h2>{morningMode ? '오늘의 흐름을 어떻게 예상하나요?' : '오늘 하루의 가장 인상적인 장면은 무엇이었나요?'}</h2>
+                <p>{morningMode ? '카드 사이의 연결을 따라 오늘 펼쳐질 분위기와 가능성을 적어보세요.' : '마음에 오래 남은 사건이나 감정부터 적고, 어떤 카드와 이어지는지 살펴보세요.'}</p>
+                {!morningMode && (
+                  <ChoicePills
+                    label="하루의 기분"
+                    value={dailyMood}
+                    onChange={setDailyMood}
+                    options={[
+                      { value: 'good', symbol: '●', label: '좋았어요' },
+                      { value: 'normal', symbol: '◐', label: '무난했어요' },
+                      { value: 'bad', symbol: '○', label: '힘들었어요' },
+                    ]}
                   />
-                </div>
-              </div>
+                )}
+                <textarea className="paper-input tall" value={dailyPrimaryNote} onChange={(event) => setDailyPrimaryNote(event.target.value)} placeholder={morningMode ? '오늘의 흐름과 예상되는 장면을 적어보세요.' : '오늘 하루 중 오래 남은 장면을 적어보세요.'} />
+              </article>
+              <article className="ink-panel note-panel">
+                <span className="eyebrow">{morningMode ? 'EVENING RETURN' : 'READING REVIEW'}</span>
+                <h2>{morningMode ? '하루가 지난 뒤, 카드는 어떻게 현실이 되었나요?' : '카드는 오늘의 경험을 얼마나 잘 비추었나요?'}</h2>
+                <p>{morningMode ? '나중에 돌아와 실제 사건과 아침의 해석을 비교해 보세요.' : '처음 보이지 않았던 카드의 의미와 리딩에 대한 만족도를 함께 남겨보세요.'}</p>
+                <ChoicePills
+                  label="리딩 만족도"
+                  value={dailySatisfaction}
+                  onChange={setDailySatisfaction}
+                  options={[
+                    { value: 'good', symbol: '◎', label: '잘 맞았어요' },
+                    { value: 'normal', symbol: '△', label: '일부 맞았어요' },
+                    { value: 'bad', symbol: '×', label: '다시 볼래요' },
+                  ]}
+                />
+                <textarea className="paper-input tall" value={dailySecondaryNote} onChange={(event) => setDailySecondaryNote(event.target.value)} placeholder={morningMode ? '실제로 펼쳐진 일과 새롭게 알게 된 해석을 적어보세요.' : '카드와 하루가 맞닿은 지점, 아쉬웠던 해석을 적어보세요.'} />
+              </article>
+            </section>
 
-              {/* Evening Note */}
-              <div className="double-border">
-                <div className="double-border-inner" style={{ padding: '20px' }}>
-                  <h3 className="serif-font" style={{ fontSize: '16px', color: 'var(--text-gold)', marginBottom: '14px', borderBottom: '1px solid var(--border-color)', paddingBottom: '6px' }}>
-                    자기 전 (Evening Reflect)
-                  </h3>
-                  <p style={{ fontSize: '12px', color: 'var(--text-secondary)', marginBottom: '10px' }}>
-                    하루를 마무리하며 내 예측이 얼마나 일치했는지, 혹은 카드가 사실 어떠한 현실적 뜻으로 펼쳐졌는지 복기해 보세요.
-                  </p>
-                  
-                  {/* Daily Mood Emoji Selector */}
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '14px', flexWrap: 'wrap' }}>
-                    <span style={{ fontSize: '13px', color: 'var(--text-secondary)', fontWeight: 'bold' }}>하루 기분:</span>
-                    <div style={{ display: 'flex', gap: '8px' }}>
-                      {[
-                        { emoji: '😊', label: '좋음', val: 'good' },
-                        { emoji: '😐', label: '무난', val: 'normal' },
-                        { emoji: '😢', label: '나쁨', val: 'bad' }
-                      ].map(m => {
-                        const isSelected = dailyMood === m.val;
-                        return (
-                          <button
-                            key={m.val}
-                            onClick={() => setDailyMood(dailyMood === m.val ? '' : m.val)}
-                            style={{
-                              background: isSelected ? 'var(--btn-bg)' : 'var(--panel-bg-alt)',
-                              color: isSelected ? 'var(--btn-text)' : 'var(--text-primary)',
-                              border: '1px solid var(--border-color)',
-                              opacity: isSelected ? 1 : 0.6,
-                              borderRadius: '20px',
-                              padding: '4px 12px',
-                              fontSize: '13px',
-                              cursor: 'pointer',
-                              display: 'inline-flex',
-                              alignItems: 'center',
-                              gap: '6px',
-                              fontWeight: isSelected ? 'bold' : 'normal',
-                              transition: 'all 0.2s',
-                              transform: isSelected ? 'scale(1.05)' : 'scale(1)'
-                            }}
-                            onMouseEnter={(e) => {
-                              if (!isSelected) e.currentTarget.style.opacity = '1';
-                            }}
-                            onMouseLeave={(e) => {
-                              if (!isSelected) e.currentTarget.style.opacity = '0.6';
-                            }}
-                          >
-                            <span style={{ fontSize: '15px' }}>{m.emoji}</span>
-                            <span>{m.label}</span>
-                          </button>
-                        );
-                      })}
-                    </div>
-                  </div>
+            <section className="ink-panel memo-panel">
+              <span className="eyebrow">MARGINALIA</span>
+              <h2>자유 메모</h2>
+              <p>정해진 질문에 들어맞지 않는 생각, 꿈, 우연, 나중에 확인할 단서를 자유롭게 남겨두세요.</p>
+              <textarea className="paper-input tall" value={dailyGeneralMemo} onChange={(event) => setDailyGeneralMemo(event.target.value)} placeholder="떠오르는 것을 형식 없이 적어보세요." />
+            </section>
 
-                  <textarea
-                    className="parchment-input"
-                    placeholder="하루를 되돌아보고 깨달은 진짜 해석과 반성을 기록해 보세요..."
-                    value={dailyEveningNote}
-                    onChange={(e) => setDailyEveningNote(e.target.value)}
-                  />
-
-                  {/* Reading Satisfaction Selector */}
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginTop: '14px', flexWrap: 'wrap' }}>
-                    <span style={{ fontSize: '13px', color: 'var(--text-secondary)', fontWeight: 'bold' }}>리딩 만족도:</span>
-                    <div style={{ display: 'flex', gap: '8px' }}>
-                      {[
-                        { emoji: '⭕', label: '만족/일치', val: 'good' },
-                        { emoji: '🔺', label: '보통', val: 'normal' },
-                        { emoji: '❌', label: '미흡/불일치', val: 'bad' }
-                      ].map(s => {
-                        const isSelected = dailySatisfaction === s.val;
-                        return (
-                          <button
-                            key={s.val}
-                            onClick={() => setDailySatisfaction(dailySatisfaction === s.val ? '' : s.val)}
-                            style={{
-                              background: isSelected ? 'var(--btn-bg)' : 'var(--panel-bg-alt)',
-                              color: isSelected ? 'var(--btn-text)' : 'var(--text-primary)',
-                              border: '1px solid var(--border-color)',
-                              opacity: isSelected ? 1 : 0.6,
-                              borderRadius: '20px',
-                              padding: '4px 12px',
-                              fontSize: '13px',
-                              cursor: 'pointer',
-                              display: 'inline-flex',
-                              alignItems: 'center',
-                              gap: '6px',
-                              fontWeight: isSelected ? 'bold' : 'normal',
-                              transition: 'all 0.2s',
-                              transform: isSelected ? 'scale(1.05)' : 'scale(1)'
-                            }}
-                            onMouseEnter={(e) => {
-                              if (!isSelected) e.currentTarget.style.opacity = '1';
-                            }}
-                            onMouseLeave={(e) => {
-                              if (!isSelected) e.currentTarget.style.opacity = '0.6';
-                            }}
-                          >
-                            <span style={{ fontSize: '14px' }}>{s.emoji}</span>
-                            <span>{s.label}</span>
-                          </button>
-                        );
-                      })}
-                    </div>
-                  </div>
-                </div>
-              </div>
-
+            <div className="save-row">
+              <button className="ink-button red large" type="button" onClick={saveJournal}><Save size={18} /> 데일리 리딩 저장</button>
+              {saveNotice && <span className="save-notice" role="status">{saveNotice}</span>}
             </div>
-
-            {/* Save Button */}
-            <div style={{ textAlign: 'center', marginTop: '10px' }}>
-              <button className="gold-button" style={{ padding: '12px 30px', fontSize: '16px' }} onClick={saveJournal}>
-                <Save size={18} />
-                데일리 리딩 저널 저장하기
-              </button>
+          </div>
+        ) : (
+          <div className="workspace-stack" data-testid="free-workspace">
+            <section className="inquiry-panel ink-panel">
+              <span className="eyebrow">THE INQUIRY</span>
+              <label htmlFor="free-question">무엇을 묻고 싶나요?</label>
+              <input id="free-question" value={freeQuestion} onChange={(event) => setFreeQuestion(event.target.value)} placeholder="질문을 한 문장으로 적어보세요." />
+            </section>
+            <RowLayoutEditor
+              rows={freeRows}
+              setRows={setFreeRows}
+              cards={freeCards}
+              setCards={setFreeCards}
+              onOpenCard={openCard}
+              onClearCard={(index) => clearCard(index, 'free')}
+              onShuffle={() => shuffle('free')}
+              isShuffling={isShufflingFree}
+            />
+            <CardKeywordNotes cards={freeCards} memos={freeMemos} setMemos={setFreeMemos} />
+            <PairingNotes cards={freeCards} items={freeCombinations} setItems={setFreeCombinations} />
+            <section className="daily-notes-grid">
+              <article className="ink-panel note-panel">
+                <span className="eyebrow">INTERPRETATION</span>
+                <h2>나의 스프레드 해석</h2>
+                <p>질문, 카드의 위치, 조합을 한 흐름으로 묶어 답을 적어보세요.</p>
+                <textarea className="paper-input tall" value={freePrediction} onChange={(event) => setFreePrediction(event.target.value)} placeholder="리딩에서 읽은 답과 앞으로의 가능성을 적어보세요." />
+              </article>
+              <article className="ink-panel note-panel">
+                <span className="eyebrow">AFTERWARDS</span>
+                <h2>결과와 피드백</h2>
+                <p>시간이 지난 뒤 실제 결과와 처음의 해석을 비교해 보세요.</p>
+                <textarea className="paper-input tall" value={freeFeedback} onChange={(event) => setFreeFeedback(event.target.value)} placeholder="무엇이 맞았고 무엇을 새롭게 이해했는지 적어보세요." />
+              </article>
+            </section>
+            <section className="ink-panel memo-panel">
+              <span className="eyebrow">MARGINALIA</span>
+              <h2>자유 메모</h2>
+              <p>질문과 직접 관계없어 보여도 남겨둘 가치가 있는 생각과 단서를 기록하세요.</p>
+              <textarea className="paper-input tall" value={freeGeneralMemo} onChange={(event) => setFreeGeneralMemo(event.target.value)} placeholder="떠오르는 것을 형식 없이 적어보세요." />
+            </section>
+            <div className="save-row">
+              <button className="ink-button red large" type="button" onClick={saveJournal}><Save size={18} /> 프리 리딩 저장</button>
+              {saveNotice && <span className="save-notice" role="status">{saveNotice}</span>}
             </div>
-
           </div>
         )}
-
-        {/* TAB 2: FREE READING */}
-        {activeTab === 'free' && (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '30px' }}>
-            
-            {/* Main Question Input Box */}
-            <div className="vintage-panel" style={{ textAlign: 'center', padding: '30px 24px' }}>
-              <span className="serif-font" style={{ fontSize: '13px', color: 'var(--text-gold)', display: 'block', marginBottom: '8px' }}>
-                THE INQUIRY
-              </span>
-              <input
-                type="text"
-                className="parchment-input serif-font"
-                style={{ 
-                  fontSize: '24px', 
-                  fontWeight: 'bold', 
-                  textAlign: 'center', 
-                  color: 'var(--text-gold)', 
-                  border: 'none', 
-                  borderBottom: '2px solid var(--border-color)', 
-                  borderRadius: 0,
-                  backgroundColor: 'transparent',
-                  padding: '8px 0',
-                  maxWidth: '800px',
-                  margin: '0 auto'
-                }}
-                placeholder="어떤 질문에 대한 리딩인가요? 질문을 이곳에 크게 적으세요."
-                value={freeQuestion}
-                onChange={(e) => setFreeQuestion(e.target.value)}
-              />
-            </div>
-
-            {/* Card Layout Section */}
-            <div className="double-border">
-              <div className="double-border-inner" style={{ padding: '30px 20px' }}>
-                
-                {/* Configuration Controls Bar */}
-                <div style={{ 
-                  display: 'flex', 
-                  justifyContent: 'space-between', 
-                  alignItems: 'center', 
-                  marginBottom: '24px', 
-                  flexWrap: 'wrap', 
-                  gap: '16px',
-                  borderBottom: '1px solid rgba(223, 183, 108, 0.2)',
-                  paddingBottom: '16px'
-                }}>
-                  <h3 style={{ fontSize: '18px', color: 'var(--text-gold)', display: 'flex', alignItems: 'center', gap: '8px' }}>
-                    <Layers size={18} />
-                    스프레드 카드 및 포메이션 설정
-                  </h3>
-                  
-                  <div style={{ display: 'flex', gap: '20px', flexWrap: 'wrap', alignItems: 'center' }}>
-                    
-                    {/* Total Cards Selector */}
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                      <span style={{ fontSize: '15px', color: 'var(--text-secondary)' }}>총 카드 수:</span>
-                      <select
-                        className="parchment-input"
-                        style={{ height: '36px', padding: '0 12px', width: '180px', fontSize: '14px', fontWeight: 'bold' }}
-                        value={freeCardCount}
-                        onChange={(e) => handleFreeCardCountChange(parseInt(e.target.value))}
-                      >
-                        {[1, 2, 3, 4, 5, 6, 7, 8, 9].map(n => (
-                          <option key={n} value={n}>{n}장</option>
-                        ))}
-                        <option value={36}>Grand Tableau (36장)</option>
-                      </select>
-                    </div>
-
-                    {/* Columns Selector */}
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                      <span style={{ fontSize: '15px', color: 'var(--text-secondary)' }}>한 줄당 카드 수:</span>
-                      <div style={{ display: 'flex', alignItems: 'center', border: '1px solid var(--border-color)', borderRadius: '4px', overflow: 'hidden' }}>
-                        <button 
-                          onClick={() => setFreeCols(prev => Math.max(1, prev - 1))}
-                          style={{ background: 'var(--panel-bg-alt)', border: 'none', color: 'var(--text-primary)', padding: '6px 10px', cursor: 'pointer' }}
-                          disabled={freeCols <= 1}
-                        >
-                          <Minus size={14} />
-                        </button>
-                        <span style={{ padding: '0 14px', fontWeight: 'bold', fontSize: '14px', color: 'var(--text-gold)', minWidth: '30px', textAlign: 'center' }}>
-                          {freeCols}
-                        </span>
-                        <button 
-                          onClick={() => setFreeCols(prev => Math.min(12, prev + 1))}
-                          style={{ background: 'var(--panel-bg-alt)', border: 'none', color: 'var(--text-primary)', padding: '6px 10px', cursor: 'pointer' }}
-                          disabled={freeCols >= 12}
-                        >
-                          <Plus size={14} />
-                        </button>
-                      </div>
-                    </div>
-
-                    {/* Shuffle & Random Draw Button */}
-                    <button
-                      className="gold-button"
-                      onClick={triggerShuffleFree}
-                      disabled={isShufflingFree}
-                      style={{ height: '36px', padding: '0 16px', fontSize: '13px' }}
-                    >
-                      <Sparkles size={14} className={isShufflingFree ? "animate-spin" : ""} />
-                      {isShufflingFree ? "셔플 중..." : "🃏 셔플 & 무작위 뽑기"}
-                    </button>
-
-                  </div>
-                </div>
-
-                {/* Helper info on active Grid alignment */}
-                <div style={{ 
-                  fontSize: '14px', 
-                  color: 'var(--text-secondary)', 
-                  marginBottom: '16px', 
-                  display: 'flex', 
-                  alignItems: 'center', 
-                  gap: '6px',
-                  justifyContent: 'center'
-                }}>
-                  <Grid size={14} style={{ color: 'var(--text-gold)' }} />
-                  <span>
-                    {freeCardCount === 36
-                      ? <span>포메이션 정보: 총 <b>36</b>장의 카드가 그랜드 테블루 <b>(8x4 + 4)</b> 형태로 가운데 정렬 배치됩니다.</span>
-                      : <span>포메이션 정보: 총 <b>{freeCardCount}</b>장의 카드가 가로 <b>{freeCols}</b>개씩 <b>{Math.ceil(freeCardCount / freeCols)}</b>줄로 가운데 정렬 배치됩니다.</span>
-                    }
-                  </span>
-                </div>
-
-                {/* Grid of Card Slots */}
-                <div className={`cards-row-container ${freeCardCount === 36 ? 'grand-tableau-grid' : ''}`} style={{ padding: '30px 10px' }}>
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '20px', alignItems: 'center', width: '100%' }}>
-                    {freeRows.map((rowCards, rowIndex) => (
-                      <div 
-                        key={rowIndex} 
-                        className="cards-grid" 
-                        style={{ 
-                          display: 'flex', 
-                          justifyContent: 'center', 
-                          gap: '20px', 
-                          flexWrap: 'wrap', 
-                          width: '100%' 
-                        }}
-                      >
-                        {rowCards.map((card, colIndex) => {
-                          const globalIndex = rowIndex * freeCols + colIndex;
-                          return (
-                            <CardSlot 
-                              key={globalIndex}
-                              card={card}
-                              index={globalIndex}
-                              onSelect={(emptyCard) => {
-                                if (emptyCard === null) {
-                                  setFreeCards(prev => {
-                                    const copy = [...prev];
-                                    copy[globalIndex] = null;
-                                    return copy;
-                                  });
-                                } else {
-                                  openCardSelectModal(globalIndex);
-                                }
-                              }}
-                            />
-                          );
-                        })}
-                      </div>
-                    ))}
-                  </div>
-                </div>
-
-                {/* Card pairings assistant */}
-                {renderPairingInterpreter(freeCards)}
-
-              </div>
-            </div>
-
-            {/* Free Notes (Prediction / Feedback) */}
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
-              
-              {/* Prediction */}
-              <div className="double-border">
-                <div className="double-border-inner" style={{ padding: '24px' }}>
-                  <h3 className="serif-font" style={{ fontSize: '16px', color: 'var(--text-gold)', marginBottom: '10px' }}>
-                    1. 나의 스프레드 해석 및 예측 (Prediction)
-                  </h3>
-                  <textarea
-                    className="parchment-input"
-                    style={{ minHeight: '130px' }}
-                    placeholder="질문과 카드의 배열을 토대로 도출한 해답과 앞으로 일어날 일을 적으세요..."
-                    value={freePrediction}
-                    onChange={(e) => setFreePrediction(e.target.value)}
-                  />
-                </div>
-              </div>
-
-              {/* Feedback */}
-              <div className="double-border">
-                <div className="double-border-inner" style={{ padding: '24px' }}>
-                  <h3 className="serif-font" style={{ fontSize: '16px', color: 'var(--text-gold)', marginBottom: '10px' }}>
-                    2. 결과 및 피드백 (Feedback)
-                  </h3>
-                  <textarea
-                    className="parchment-input"
-                    style={{ minHeight: '130px' }}
-                    placeholder="결과가 일어난 뒤, 이 리딩이 어떻게 맞았는지 피드백과 추가적인 해석을 적어보세요..."
-                    value={freeFeedback}
-                    onChange={(e) => setFreeFeedback(e.target.value)}
-                  />
-                </div>
-              </div>
-
-            </div>
-
-            {/* Save Button */}
-            <div style={{ textAlign: 'center', marginTop: '10px' }}>
-              <button className="gold-button" style={{ padding: '12px 30px', fontSize: '16px' }} onClick={saveJournal}>
-                <Save size={18} />
-                프리 리딩 저널 저장하기
-              </button>
-            </div>
-
-          </div>
-        )}
-
       </main>
 
-      {/* Footer */}
-      <footer style={{
-        borderTop: '1px solid var(--border-color)',
-        padding: '24px',
-        textAlign: 'center',
-        color: 'var(--text-secondary)',
-        fontSize: '12px',
-        backgroundColor: 'var(--panel-bg)',
-        marginTop: '60px'
-      }}>
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', marginBottom: '8px' }}>
-          <span>Marie Anne Lenormand (1772–1843) Cartomancy Tribute</span>
-        </div>
-        <p style={{ opacity: 0.7 }}>
-          레이먼드/블루 아울 덱 이미지 제공: Steve-P Cards. 
-          이 앱은 오직 개인 연구 및 오라클 카드 복기용 저널링 목적으로 설계되었습니다.
-        </p>
+      <footer className="site-footer">
+        <strong>Lenormand Journal · Private Reading Archive</strong>
+        <span>E quindi uscimmo a riveder le stelle.</span>
       </footer>
 
-      {/* CARD SELECTION MODAL */}
+      <HistoryDrawer
+        open={isHistoryOpen}
+        onClose={() => setIsHistoryOpen(false)}
+        journals={journals}
+        currentCards={currentCards}
+        onLoad={loadJournal}
+        onDelete={deleteJournal}
+      />
+
       <CardSelectModal
         isOpen={isModalOpen}
         onClose={() => setIsModalOpen(false)}
-        onSelectCard={handleSelectCard}
-        currentCardId={activeCardId}
+        onSelectCard={selectCard}
+        currentCardId={currentCard?.id || null}
       />
 
-      {/* SIDEBAR: HISTORY DRAWERS */}
-      {isSidebarOpen && (
-        <div 
-          style={{
-            position: 'fixed',
-            top: 0,
-            left: 0,
-            right: 0,
-            bottom: 0,
-            backgroundColor: 'rgba(0,0,0,0.7)',
-            zIndex: 100,
-            display: 'flex',
-            justifyContent: 'flex-end',
-            backdropFilter: 'blur(3px)'
-          }}
-          onClick={() => setIsSidebarOpen(false)}
-        >
-          <div 
-            style={{
-              width: '100%',
-              maxWidth: '450px',
-              height: '100%',
-              backgroundColor: 'var(--panel-bg)',
-              borderLeft: '1px solid var(--border-color)',
-              boxShadow: '-10px 0 30px rgba(0,0,0,0.5)',
-              display: 'flex',
-              flexDirection: 'column',
-              padding: '24px'
-            }}
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid var(--border-color)', paddingBottom: '16px', marginBottom: '20px' }}>
-              <h2 className="serif-font" style={{ fontSize: '18px', color: 'var(--text-gold)', margin: 0, display: 'flex', alignItems: 'center', gap: '8px' }}>
-                <BookOpen size={18} />
-                저널 히스토리
-              </h2>
-              <button 
-                className="gold-button-outline" 
-                style={{ padding: '4px 10px', fontSize: '12px' }}
-                onClick={() => setIsSidebarOpen(false)}
-              >
-                닫기
-              </button>
-            </div>
-
-            {/* Real-time search and filter row */}
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', marginBottom: '16px' }}>
-              <div style={{ position: 'relative', width: '100%' }}>
-                <Search size={16} style={{ position: 'absolute', left: '10px', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-secondary)' }} />
-                <input
-                  type="text"
-                  className="parchment-input"
-                  style={{ paddingLeft: '34px', height: '34px', fontSize: '13px' }}
-                  placeholder="기록 날짜, 질문, 키워드, 카드명 검색..."
-                  value={historySearch}
-                  onChange={(e) => setHistorySearch(e.target.value)}
-                />
-                {historySearch && (
-                  <button
-                    onClick={() => setHistorySearch('')}
-                    style={{ position: 'absolute', right: '10px', top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', color: 'var(--text-secondary)', cursor: 'pointer' }}
-                  >
-                    <X size={14} />
-                  </button>
-                )}
-              </div>
-              
-              <div style={{ display: 'flex', gap: '6px' }}>
-                {[
-                  { label: '전체', val: 'all' },
-                  { label: '데일리', val: 'daily' },
-                  { label: '프리 리딩', val: 'free' }
-                ].map(tab => (
-                  <button
-                    key={tab.val}
-                    onClick={() => setHistoryTypeFilter(tab.val)}
-                    style={{
-                      flex: 1,
-                      padding: '4px 0',
-                      fontSize: '12px',
-                      borderRadius: '4px',
-                      border: '1px solid var(--border-color)',
-                      background: historyTypeFilter === tab.val ? 'var(--btn-bg)' : 'transparent',
-                      color: historyTypeFilter === tab.val ? 'var(--btn-text)' : 'var(--text-secondary)',
-                      cursor: 'pointer',
-                      fontWeight: historyTypeFilter === tab.val ? 'bold' : 'normal',
-                      transition: 'all 0.2s'
-                    }}
-                  >
-                    {tab.label}
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            <div style={{ flex: 1, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '14px' }}>
-              {filteredJournals.length === 0 ? (
-                <div style={{ textAlign: 'center', padding: '40px 0', color: 'var(--text-secondary)', fontSize: '14px' }}>
-                  검색 조건에 맞는 저널 기록이 없습니다.
-                </div>
-              ) : (
-                filteredJournals.map((entry) => {
-                  const cardList = entry.cards.map(id => id ? LENORMAND_CARDS.find(c => c.id === id) : null);
-                  return (
-                    <div
-                      key={entry.id}
-                      onClick={() => loadJournal(entry)}
-                      style={{
-                        border: '1px solid var(--border-color)',
-                        backgroundColor: 'var(--panel-bg-alt)',
-                        borderRadius: '6px',
-                        padding: '14px',
-                        cursor: 'pointer',
-                        transition: 'transform 0.2s, box-shadow 0.2s'
-                      }}
-                      onMouseEnter={(e) => {
-                        e.currentTarget.style.transform = 'translateY(-2px)';
-                        e.currentTarget.style.boxShadow = '0 4px 10px rgba(0,0,0,0.3)';
-                      }}
-                      onMouseLeave={(e) => {
-                        e.currentTarget.style.transform = 'translateY(0)';
-                        e.currentTarget.style.boxShadow = 'none';
-                      }}
-                    >
-                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '8px' }}>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                          <span className="symbol-badge" style={{ fontSize: '10px', padding: '2px 6px' }}>
-                            {entry.type === 'daily' ? '데일리' : '프리 리딩'}
-                          </span>
-                          {entry.type === 'daily' && entry.mood && (
-                            <span style={{ 
-                              fontSize: '11px', 
-                              backgroundColor: 'var(--panel-bg)', 
-                              padding: '2px 8px', 
-                              borderRadius: '12px',
-                              border: '1px solid var(--border-color)',
-                              display: 'inline-flex',
-                              alignItems: 'center',
-                              gap: '4px',
-                              color: 'var(--text-gold)'
-                            }}>
-                              {entry.mood === 'good' && '😊 좋음'}
-                              {entry.mood === 'normal' && '😐 무난'}
-                              {entry.mood === 'bad' && '😢 나쁨'}
-                            </span>
-                          )}
-                          {entry.type === 'daily' && entry.satisfaction && (
-                            <span style={{ 
-                              fontSize: '11px', 
-                              backgroundColor: 'var(--panel-bg)', 
-                              padding: '2px 8px', 
-                              borderRadius: '12px',
-                              border: '1px solid var(--border-color)',
-                              display: 'inline-flex',
-                              alignItems: 'center',
-                              gap: '4px',
-                              color: 'var(--text-gold)'
-                            }}>
-                              {entry.satisfaction === 'good' && '⭕ 만족'}
-                              {entry.satisfaction === 'normal' && '🔺 보통'}
-                              {entry.satisfaction === 'bad' && '❌ 미흡'}
-                            </span>
-                          )}
-                        </div>
-                        <button
-                          onClick={(e) => deleteJournal(entry.id, e)}
-                          style={{
-                            background: 'none',
-                            border: 'none',
-                            color: '#f87171',
-                            cursor: 'pointer',
-                            padding: '2px',
-                            display: 'flex',
-                            alignItems: 'center',
-                            marginLeft: '8px',
-                            flexShrink: 0
-                          }}
-                        >
-                          <Trash2 size={14} />
-                        </button>
-                      </div>
-
-                      <div style={{ fontWeight: 'bold', fontSize: '14px', color: 'var(--text-primary)', marginBottom: '6px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                        {entry.type === 'daily' 
-                          ? `📅 ${entry.date}`
-                          : `❓ ${entry.question}`
-                        }
-                      </div>
-
-                      <div style={{ display: 'flex', gap: '6px', marginBottom: '8px', flexWrap: 'wrap' }}>
-                        {cardList.slice(0, 8).map((c, i) => (
-                          <div 
-                            key={i} 
-                            style={{ 
-                              fontSize: '10px', 
-                              backgroundColor: 'rgba(0,0,0,0.3)', 
-                              padding: '1px 5px', 
-                              borderRadius: '3px',
-                              border: '1px solid rgba(223,183,108,0.2)',
-                              color: c ? 'var(--text-gold)' : 'var(--text-secondary)'
-                            }}
-                          >
-                            {c ? c.nameKo : '빈칸'}
-                          </div>
-                        ))}
-                        {cardList.length > 8 && (
-                          <div style={{ fontSize: '10px', color: 'var(--text-secondary)' }}>+{cardList.length - 8}장</div>
-                        )}
-                      </div>
-
-                      <div style={{ fontSize: '10px', color: 'var(--text-secondary)', textAlign: 'right' }}>
-                        저장일시: {entry.timestamp}
-                      </div>
-                    </div>
-                  );
-                })
-              )}
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* SETTINGS AND BACKUP MODAL */}
       {isSettingsOpen && (
         <div className="modal-overlay" onClick={() => setIsSettingsOpen(false)}>
-          <div className="modal-content" style={{ maxWidth: '580px' }} onClick={(e) => e.stopPropagation()}>
+          <section className="modal-content settings-modal" onClick={(event) => event.stopPropagation()}>
             <div className="modal-header">
-              <h2 style={{ fontSize: '18px', color: 'var(--text-gold)', margin: 0, display: 'flex', alignItems: 'center', gap: '8px' }}>
-                <Settings size={20} />
-                설정 및 데이터 관리
-              </h2>
-              <button className="modal-close" onClick={() => setIsSettingsOpen(false)}>
-                <X size={20} />
-              </button>
+              <div><span className="eyebrow">ARCHIVE MANAGEMENT</span><h2>설정 및 데이터 관리</h2></div>
+              <button className="icon-button" type="button" onClick={() => setIsSettingsOpen(false)}><X size={20} /></button>
             </div>
-
-            <div style={{ padding: '24px', display: 'flex', flexDirection: 'column', gap: '24px', maxHeight: '70vh', overflowY: 'auto' }}>
-              
-              {/* Firebase Cloud Sync Info */}
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-                <h3 style={{ fontSize: '15px', color: 'var(--text-gold)', margin: 0, borderBottom: '1px solid var(--border-color)', paddingBottom: '6px' }}>
-                  1. 구글 클라우드 실시간 동기화 상태
-                </h3>
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-                  {googleUser ? (
-                    <div style={{ backgroundColor: 'var(--panel-bg-alt)', border: '1px solid var(--border-color)', padding: '12px', borderRadius: '6px', fontSize: '13px' }}>
-                      <div style={{ marginBottom: '6px' }}>계정: <b>{googleUser.email}</b> {googleUser.isDemo && <span style={{ color: 'var(--text-gold)' }}>(데모 계정)</span>}</div>
-                      <div>상태: <span style={{ color: syncStatus === 'error' ? '#f87171' : 'var(--text-gold)', fontWeight: 'bold' }}>{syncMessage || (syncStatus === 'synced' ? '최신 상태입니다.' : '연결됨')}</span></div>
+            <div className="settings-body">
+              <section>
+                <h3>클라우드 동기화</h3>
+                {googleUser ? (
+                  <>
+                    <p><Cloud size={15} /> {googleUser.email}</p>
+                    <p className="muted">상태: {syncStatus === 'syncing' ? '동기화 중' : syncStatus === 'error' ? '오류' : '연결됨'}{lastSyncedTime ? ` · 최근 ${lastSyncedTime}` : ''}</p>
+                    <label className="checkbox-line"><input type="checkbox" checked={isAutoSync} onChange={(event) => setIsAutoSync(event.target.checked)} /> 기록 변경 시 자동 백업</label>
+                    <div className="settings-actions">
+                      <button className="ink-button" type="button" onClick={syncToCloud}>지금 올리기</button>
+                      <button className="paper-button" type="button" onClick={restoreFromCloud}>백업 불러오기</button>
+                      <button className="paper-button" type="button" onClick={logout}><LogOut size={14} /> 로그아웃</button>
                     </div>
-                  ) : (
-                    <div style={{ fontSize: '12px', color: 'var(--text-secondary)', lineHeight: '1.5' }}>
-                      파이어베이스를 통해 구글 로그인을 완료하면 기기간 데이터가 실시간으로 안전하게 자동 동기화됩니다.
-                    </div>
-                  )}
-
-                  <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', marginTop: '4px' }}>
-                    {!googleUser ? (
-                      <>
-                        <button 
-                          className="gold-button" 
-                          style={{ flex: 1, height: '38px', fontSize: '13px' }} 
-                          onClick={() => {
-                            handleGoogleLogin();
-                            setIsSettingsOpen(false);
-                          }}
-                        >
-                          <LogIn size={14} />
-                          구글 로그인 진행
-                        </button>
-                        <button 
-                          className="gold-button-outline" 
-                          style={{ flex: 1, height: '38px', fontSize: '13px' }} 
-                          onClick={() => {
-                            startDemoSession();
-                            setIsSettingsOpen(false);
-                          }}
-                        >
-                          <Sparkles size={14} />
-                          데모 계정 로그인
-                        </button>
-                      </>
-                    ) : (
-                      <button 
-                        className="gold-button-outline" 
-                        style={{ width: '100%', height: '38px', fontSize: '13px' }} 
-                        onClick={() => {
-                          handleLogOut();
-                          setIsSettingsOpen(false);
-                        }}
-                      >
-                        <LogOut size={14} />
-                        구글 로그아웃 진행
-                      </button>
-                    )}
-                  </div>
+                  </>
+                ) : (
+                  <button className="ink-button" type="button" onClick={login}><LogIn size={15} /> 구글 계정으로 로그인</button>
+                )}
+              </section>
+              <section>
+                <h3>기록 파일</h3>
+                <p className="muted">모든 과거 기록을 JSON 파일로 보관하거나 다시 가져올 수 있습니다.</p>
+                <div className="settings-actions">
+                  <button className="ink-button" type="button" onClick={exportData}><FileDown size={15} /> 내보내기</button>
+                  <label className="paper-button file-button"><FileUp size={15} /> 가져오기<input type="file" accept=".json" onChange={importData} /></label>
                 </div>
-              </div>
-
-              {/* Data Import/Export */}
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-                <h3 style={{ fontSize: '15px', color: 'var(--text-gold)', margin: 0, borderBottom: '1px solid var(--border-color)', paddingBottom: '6px' }}>
-                  2. 수동 저널 파일 백업 및 가져오기
-                </h3>
-                <p style={{ fontSize: '12px', color: 'var(--text-secondary)', margin: 0 }}>
-                  인터넷이 연결되어 있지 않은 환경에서도 수동으로 JSON 파일을 내보내 백업을 만들거나 기존 데이터를 복구할 수 있습니다.
-                </p>
-                <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap' }}>
-                  <button className="gold-button" style={{ flex: 1, minWidth: '150px', height: '40px' }} onClick={exportToJson}>
-                    <FileDown size={16} />
-                    JSON 파일로 내보내기
-                  </button>
-                  <label className="gold-button-outline" style={{ flex: 1, minWidth: '150px', height: '40px', cursor: 'pointer' }}>
-                    <FileUp size={16} />
-                    JSON 파일에서 가져오기
-                    <input 
-                      type="file" 
-                      accept=".json" 
-                      onChange={importFromJson} 
-                      style={{ display: 'none' }} 
-                    />
-                  </label>
-                </div>
-              </div>
-
-              {/* Developer / Github link */}
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', borderTop: '1px solid var(--border-color)', paddingTop: '16px', fontSize: '12px', color: 'var(--text-secondary)' }}>
-                <div>프로젝트 저장소: <a href="https://github.com/Imwul/lenormand" target="_blank" rel="noreferrer" style={{ color: 'var(--text-gold)', textDecoration: 'underline' }}>github.com/Imwul/lenormand</a></div>
-                <div style={{ opacity: 0.7 }}>Git Repository Local Remote: <code>origin (https://github.com/Imwul/lenormand.git)</code></div>
-              </div>
-
+              </section>
             </div>
-          </div>
+          </section>
         </div>
       )}
-
     </div>
   );
 }
