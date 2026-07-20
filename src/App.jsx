@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   BookMarked,
   Calendar,
@@ -23,7 +23,7 @@ import {
   X,
 } from 'lucide-react';
 import { signInWithPopup, signOut, onAuthStateChanged } from 'firebase/auth';
-import { doc, getDoc, setDoc } from 'firebase/firestore';
+import { doc, getDoc, onSnapshot, setDoc } from 'firebase/firestore';
 import { LENORMAND_CARDS, getLenormandCombo } from './constants';
 import { auth, db, googleProvider } from './firebase';
 import CardSlot from './components/CardSlot';
@@ -35,6 +35,14 @@ const safeReadJournals = () => {
   try {
     const saved = localStorage.getItem('lenormand_journals');
     return saved ? JSON.parse(saved) : [];
+  } catch {
+    return [];
+  }
+};
+
+const safeReadDeletedIds = () => {
+  try {
+    return JSON.parse(localStorage.getItem('lenormand_deleted_journal_ids') || '[]');
   } catch {
     return [];
   }
@@ -80,6 +88,16 @@ const makePair = (cards) => {
 };
 
 const cardFromId = (id) => LENORMAND_CARDS.find((card) => card.id === id) || null;
+
+const mergeJournals = (localEntries = [], cloudEntries = [], deletedIds = []) => {
+  const deleted = new Set(deletedIds);
+  const byId = new Map();
+  [...cloudEntries, ...localEntries].forEach((entry, index) => {
+    const key = entry?.id || `legacy-${entry?.timestamp || index}-${JSON.stringify(entry)}`;
+    if (!deleted.has(entry?.id)) byId.set(key, entry);
+  });
+  return [...byId.values()].sort((a, b) => Number(b.id || 0) - Number(a.id || 0));
+};
 
 function ChoicePills({ label, value, onChange, options }) {
   return (
@@ -500,6 +518,7 @@ export default function App() {
   const [freeGeneralMemo, setFreeGeneralMemo] = useState('');
 
   const [journals, setJournals] = useState(safeReadJournals);
+  const [deletedJournalIds, setDeletedJournalIds] = useState(safeReadDeletedIds);
   const [isHistoryOpen, setIsHistoryOpen] = useState(true);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -507,10 +526,18 @@ export default function App() {
   const [isShufflingDaily, setIsShufflingDaily] = useState(false);
   const [isShufflingFree, setIsShufflingFree] = useState(false);
   const [googleUser, setGoogleUser] = useState(null);
-  const [isAutoSync, setIsAutoSync] = useState(() => localStorage.getItem('is_auto_sync') === 'true');
+  const [isAutoSync, setIsAutoSync] = useState(() => {
+    const stored = localStorage.getItem('is_auto_sync');
+    return stored === null ? true : stored === 'true';
+  });
   const [syncStatus, setSyncStatus] = useState('idle');
+  const [syncMessage, setSyncMessage] = useState('로그인하면 기기 간 기록을 동기화합니다.');
+  const [syncReady, setSyncReady] = useState(false);
   const [lastSyncedTime, setLastSyncedTime] = useState(() => localStorage.getItem('last_synced_time') || '');
   const [saveNotice, setSaveNotice] = useState('');
+  const journalsRef = useRef(journals);
+  const deletedJournalIdsRef = useRef(deletedJournalIds);
+  const lastWrittenPayloadRef = useRef('');
 
   const currentCards = activeTab === 'daily' ? dailyCards : freeCards;
   const currentCard = activeSlotIndex === null ? null : currentCards[activeSlotIndex];
@@ -521,8 +548,14 @@ export default function App() {
   }, []);
 
   useEffect(() => {
+    journalsRef.current = journals;
     localStorage.setItem('lenormand_journals', JSON.stringify(journals));
   }, [journals]);
+
+  useEffect(() => {
+    deletedJournalIdsRef.current = deletedJournalIds;
+    localStorage.setItem('lenormand_deleted_journal_ids', JSON.stringify(deletedJournalIds));
+  }, [deletedJournalIds]);
 
   useEffect(() => {
     localStorage.setItem('is_auto_sync', String(isAutoSync));
@@ -530,26 +563,104 @@ export default function App() {
 
   useEffect(() => {
     if (!auth) return undefined;
-    return onAuthStateChanged(auth, (user) => setGoogleUser(user));
+    return onAuthStateChanged(auth, (user) => {
+      setGoogleUser(user);
+      setSyncReady(false);
+      if (!user) {
+        setSyncStatus('idle');
+        setSyncMessage('로그인하면 기기 간 기록을 동기화합니다.');
+      }
+    });
   }, []);
 
   useEffect(() => {
-    if (!isAutoSync || !googleUser || !db) return undefined;
+    if (!googleUser || !db) return undefined;
+    let cancelled = false;
+    const connectCloud = async () => {
+      try {
+        setSyncStatus('syncing');
+        setSyncMessage('클라우드 기록을 안전하게 합치는 중…');
+        const cloudRef = doc(db, 'saves', googleUser.uid);
+        const snapshot = await getDoc(cloudRef);
+        const cloudPayload = snapshot.exists() ? snapshot.data().lenormand_journals : '';
+        const cloudDeletedIds = snapshot.exists() ? (snapshot.data().lenormand_deletedIds || []) : [];
+        const mergedDeletedIds = [...new Set([...deletedJournalIdsRef.current, ...cloudDeletedIds])];
+        const cloudEntries = cloudPayload ? JSON.parse(cloudPayload) : [];
+        const merged = mergeJournals(journalsRef.current, cloudEntries, mergedDeletedIds);
+        const mergedPayload = JSON.stringify(merged);
+        if (cancelled) return;
+        if (mergedPayload !== JSON.stringify(journalsRef.current)) setJournals(merged);
+        if (JSON.stringify(mergedDeletedIds) !== JSON.stringify(deletedJournalIdsRef.current)) setDeletedJournalIds(mergedDeletedIds);
+        const now = new Date().toISOString();
+        await setDoc(cloudRef, { lenormand_journals: mergedPayload, lenormand_deletedIds: mergedDeletedIds, lenormand_updatedAt: now }, { merge: true });
+        if (cancelled) return;
+        lastWrittenPayloadRef.current = mergedPayload;
+        const label = new Date(now).toLocaleString();
+        setLastSyncedTime(label);
+        localStorage.setItem('last_synced_time', label);
+        setSyncReady(true);
+        setSyncStatus('synced');
+        setSyncMessage(`${merged.length}개의 기록이 최신 상태입니다.`);
+      } catch (error) {
+        if (cancelled) return;
+        setSyncStatus('error');
+        setSyncMessage(`동기화 연결 실패: ${error.message}`);
+      }
+    };
+    connectCloud();
+    return () => { cancelled = true; };
+  }, [googleUser]);
+
+  useEffect(() => {
+    if (!googleUser || !db || !syncReady) return undefined;
+    const cloudRef = doc(db, 'saves', googleUser.uid);
+    return onSnapshot(cloudRef, (snapshot) => {
+      if (!snapshot.exists()) return;
+      const cloudPayload = snapshot.data().lenormand_journals || '[]';
+      const cloudDeletedIds = snapshot.data().lenormand_deletedIds || [];
+      const mergedDeletedIds = [...new Set([...deletedJournalIdsRef.current, ...cloudDeletedIds])];
+      if (cloudPayload === lastWrittenPayloadRef.current && JSON.stringify(mergedDeletedIds) === JSON.stringify(deletedJournalIdsRef.current)) return;
+      try {
+        const merged = mergeJournals(journalsRef.current, JSON.parse(cloudPayload), mergedDeletedIds);
+        const mergedPayload = JSON.stringify(merged);
+        lastWrittenPayloadRef.current = cloudPayload;
+        if (JSON.stringify(mergedDeletedIds) !== JSON.stringify(deletedJournalIdsRef.current)) setDeletedJournalIds(mergedDeletedIds);
+        if (mergedPayload !== JSON.stringify(journalsRef.current)) setJournals(merged);
+        setSyncStatus('synced');
+        setSyncMessage('다른 기기의 변경 사항을 반영했습니다.');
+      } catch (error) {
+        setSyncStatus('error');
+        setSyncMessage(`클라우드 기록을 읽지 못했습니다: ${error.message}`);
+      }
+    }, (error) => {
+      setSyncStatus('error');
+      setSyncMessage(`실시간 동기화 오류: ${error.message}`);
+    });
+  }, [googleUser, syncReady]);
+
+  useEffect(() => {
+    if (!isAutoSync || !googleUser || !db || !syncReady) return undefined;
+    const payload = JSON.stringify(mergeJournals(journals, [], deletedJournalIds));
+    if (payload === lastWrittenPayloadRef.current && !deletedJournalIds.length) return undefined;
     const timer = window.setTimeout(async () => {
       try {
         setSyncStatus('syncing');
+        setSyncMessage('변경 사항을 저장하는 중…');
         const now = new Date().toISOString();
-        await setDoc(doc(db, 'saves', googleUser.uid), { lenormand_journals: JSON.stringify(journals), lenormand_updatedAt: now }, { merge: true });
+        await setDoc(doc(db, 'saves', googleUser.uid), { lenormand_journals: payload, lenormand_deletedIds: deletedJournalIds, lenormand_updatedAt: now }, { merge: true });
+        lastWrittenPayloadRef.current = payload;
         const label = new Date(now).toLocaleString();
         setLastSyncedTime(label);
         localStorage.setItem('last_synced_time', label);
         setSyncStatus('synced');
-      } catch {
+        setSyncMessage(`${journals.length}개의 기록이 최신 상태입니다.`);
+      } catch (error) {
         setSyncStatus('error');
+        setSyncMessage(`자동 저장 실패: ${error.message}`);
       }
     }, 700);
     return () => window.clearTimeout(timer);
-  }, [journals, isAutoSync, googleUser]);
+  }, [journals, deletedJournalIds, isAutoSync, googleUser, syncReady]);
 
   const openCard = (index) => {
     setActiveSlotIndex(index);
@@ -672,7 +783,10 @@ export default function App() {
   };
 
   const deleteJournal = (id) => {
-    if (window.confirm('이 기록을 삭제할까요?')) setJournals((current) => current.filter((entry) => entry.id !== id));
+    if (window.confirm('이 기록을 삭제할까요?')) {
+      setJournals((current) => current.filter((entry) => entry.id !== id));
+      setDeletedJournalIds((current) => current.includes(id) ? current : [...current, id]);
+    }
   };
 
   const clearWorkspace = () => {
@@ -700,26 +814,39 @@ export default function App() {
 
   const login = async () => {
     try {
+      setSyncStatus('syncing');
+      setSyncMessage('구글 로그인 창을 여는 중…');
+      googleProvider.setCustomParameters({ prompt: 'select_account' });
       await signInWithPopup(auth, googleProvider);
     } catch (error) {
-      window.alert(`로그인에 실패했습니다: ${error.message}`);
+      setSyncStatus('error');
+      const message = error.code === 'auth/unauthorized-domain'
+        ? '현재 사이트 주소가 Firebase 승인 도메인에 등록되지 않았습니다.'
+        : error.message;
+      setSyncMessage(`로그인 실패: ${message}`);
+      window.alert(`로그인에 실패했습니다: ${message}`);
     }
   };
 
   const logout = async () => {
     await signOut(auth);
+    lastWrittenPayloadRef.current = '';
   };
 
   const syncToCloud = async () => {
     if (!googleUser || !db) return window.alert('먼저 구글 계정으로 로그인해 주세요.');
     try {
       setSyncStatus('syncing');
+      setSyncMessage('현재 기록을 클라우드에 올리는 중…');
       const now = new Date().toISOString();
-      await setDoc(doc(db, 'saves', googleUser.uid), { lenormand_journals: JSON.stringify(journals), lenormand_updatedAt: now }, { merge: true });
+      const payload = JSON.stringify(journals);
+      await setDoc(doc(db, 'saves', googleUser.uid), { lenormand_journals: payload, lenormand_deletedIds: deletedJournalIds, lenormand_updatedAt: now }, { merge: true });
+      lastWrittenPayloadRef.current = payload;
       const label = new Date(now).toLocaleString();
       setLastSyncedTime(label);
       localStorage.setItem('last_synced_time', label);
       setSyncStatus('synced');
+      setSyncMessage(`${journals.length}개의 기록을 백업했습니다.`);
       window.alert('현재 기록을 클라우드에 백업했습니다.');
     } catch (error) {
       setSyncStatus('error');
@@ -733,8 +860,11 @@ export default function App() {
     try {
       const snapshot = await getDoc(doc(db, 'saves', googleUser.uid));
       if (!snapshot.exists() || !snapshot.data().lenormand_journals) return window.alert('클라우드 백업이 없습니다.');
-      setJournals(JSON.parse(snapshot.data().lenormand_journals));
+      const cloudDeletedIds = snapshot.data().lenormand_deletedIds || [];
+      setDeletedJournalIds(cloudDeletedIds);
+      setJournals(mergeJournals([], JSON.parse(snapshot.data().lenormand_journals), cloudDeletedIds));
       setSyncStatus('synced');
+      setSyncMessage('클라우드 백업을 불러왔습니다.');
     } catch (error) {
       setSyncStatus('error');
       window.alert(`불러오기에 실패했습니다: ${error.message}`);
@@ -778,7 +908,19 @@ export default function App() {
           </div>
         </div>
         <div className="header-actions">
-          <button className="paper-button" type="button" onClick={() => setIsSettingsOpen(true)}><Settings size={15} /> 설정</button>
+          {googleUser ? (
+            <button className="paper-button sync-chip" type="button" onClick={() => setIsSettingsOpen(true)} data-testid="cloud-account-button">
+              <span className={`sync-dot ${syncStatus}`} aria-hidden="true" />
+              <Cloud size={15} />
+              <span>{googleUser.displayName || googleUser.email}</span>
+              <small>{syncStatus === 'syncing' ? '동기화 중' : syncStatus === 'error' ? '확인 필요' : '동기화됨'}</small>
+            </button>
+          ) : (
+            <button className="paper-button google-login" type="button" onClick={login} data-testid="google-login-button">
+              <LogIn size={15} /> 구글 로그인 · 동기화
+            </button>
+          )}
+          <button className="paper-button settings-trigger" type="button" onClick={() => setIsSettingsOpen(true)}><Settings size={15} /> 설정</button>
           <button className={isHistoryOpen ? 'ink-button active' : 'ink-button'} type="button" onClick={() => setIsHistoryOpen((open) => !open)} data-testid="history-toggle">
             <History size={16} /> 과거 기록 {journals.length}
           </button>
@@ -973,7 +1115,7 @@ export default function App() {
                 {googleUser ? (
                   <>
                     <p><Cloud size={15} /> {googleUser.email}</p>
-                    <p className="muted">상태: {syncStatus === 'syncing' ? '동기화 중' : syncStatus === 'error' ? '오류' : '연결됨'}{lastSyncedTime ? ` · 최근 ${lastSyncedTime}` : ''}</p>
+                    <p className="muted">{syncMessage}{lastSyncedTime ? ` · 최근 ${lastSyncedTime}` : ''}</p>
                     <label className="checkbox-line"><input type="checkbox" checked={isAutoSync} onChange={(event) => setIsAutoSync(event.target.checked)} /> 기록 변경 시 자동 백업</label>
                     <div className="settings-actions">
                       <button className="ink-button" type="button" onClick={syncToCloud}>지금 올리기</button>
