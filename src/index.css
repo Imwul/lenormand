@@ -161,6 +161,59 @@ h4,
   justify-content: flex-end;
 }
 
+.sync-chip {
+  position: relative;
+  max-width: 260px;
+  display: grid;
+  grid-template-columns: auto auto minmax(0, 1fr);
+  grid-template-rows: auto auto;
+  gap: 0 7px;
+  text-align: left;
+}
+
+.sync-chip .sync-dot {
+  grid-row: 1 / 3;
+  align-self: center;
+  width: 9px;
+  height: 9px;
+  border: 1px solid var(--ink);
+  border-radius: 50%;
+  background: #6f7f55;
+}
+
+.sync-chip .sync-dot.syncing {
+  background: #d79b35;
+  animation: sync-pulse 900ms ease-in-out infinite alternate;
+}
+
+.sync-chip .sync-dot.error {
+  background: var(--rust);
+}
+
+.sync-chip > svg {
+  grid-row: 1 / 3;
+  align-self: center;
+}
+
+.sync-chip > span:not(.sync-dot),
+.sync-chip > small {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sync-chip > small {
+  color: var(--muted);
+  font-size: 9px;
+  font-weight: 600;
+}
+
+@keyframes sync-pulse {
+  from { opacity: 0.45; }
+  to { opacity: 1; }
+}
+
 .ink-button,
 .paper-button,
 .icon-button {
@@ -732,12 +785,31 @@ h4,
   font-size: 10px;
 }
 
-.grand-tableau-grid .card-slot-outer {
-  width: clamp(54px, 7vw, 104px);
+.grand-tableau-grid .card-board-row {
+  --grand-card-width: clamp(54px, 7vw, 104px);
+  width: auto;
+  min-width: 0;
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: var(--grand-card-width);
+  justify-content: center;
+  gap: 9px;
 }
 
-.grand-tableau-grid .card-board-row {
-  gap: 9px;
+.grand-tableau-grid .card-slot-outer {
+  width: 100%;
+}
+
+.grand-tableau-grid .card-index {
+  top: 4px;
+  left: 4px;
+  width: 21px;
+  height: 21px;
+  font-size: 10px;
+}
+
+.grand-tableau-grid .card-back-placeholder::after {
+  inset: 5px;
 }
 
 .grand-tableau-grid .card-back-symbol,
@@ -1551,7 +1623,7 @@ textarea.paper-input.tall {
     font-size: 29px;
   }
 
-  .header-actions .paper-button:first-child,
+  .header-actions .settings-trigger,
   .header-actions .danger-text {
     display: none;
   }
@@ -1639,6 +1711,29 @@ textarea.paper-input.tall {
   .header-actions .ink-button svg {
     width: 18px;
     height: 18px;
+  }
+
+  .google-login {
+    padding: 7px 9px;
+    font-size: 11px;
+  }
+
+  .sync-chip {
+    width: 42px;
+    min-width: 42px;
+    padding: 7px;
+    display: flex;
+    gap: 0;
+  }
+
+  .sync-chip > span:not(.sync-dot),
+  .sync-chip > small {
+    display: none;
+  }
+
+  .sync-chip .sync-dot {
+    position: absolute;
+    margin: -21px 0 0 25px;
   }
 
   .hero-intro {
